@@ -3,9 +3,9 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.initializers import HeNormal
 import numpy as np
-import sys
-import time
-
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("QtAgg")
 
 class Numerical:
     def __init__(self, total_number_elements, gauss_points, length,
@@ -125,125 +125,124 @@ class Numerical:
         # norm_value = top / bottom
 
 
+class GradientLayer(tf.keras.layers.Layer):
+    def __init__(self, model):
+        super(GradientLayer, self).__init__()
+        self.model = model
+
+    def call(self, x):
+        with tf.GradientTape() as g2:  # Tape for second derivative
+            g2.watch(x)
+            with tf.GradientTape() as g1:  # Tape for first derivative
+                g1.watch(x)
+                u = self.model(x)  # Forward pass to get u(x)
+            du_dx = g1.gradient(u, x)  # First derivative du/dx
+        d2u_dx2 = g2.gradient(du_dx, x)  # Second derivative d²u/dx²
+        return u, du_dx, d2u_dx2
+
+
 class NeuralNetwork:
-    def __init__(self,
-                 input_layer_size, number_hidden_layers, number_neurons_per_layer, activation_function, optimizer,
+    def __init__(self, number_neurons_per_layer, number_train_sets, activation_function,
                  cross_section_area, youngs_modulus, constant, length):
         self.A = cross_section_area
         self.E = youngs_modulus
         self.c = constant
         self.L = length
         self.model = Sequential()
-        self.add_layers(input_layer_size=input_layer_size,
-                        number_hidden_layers=number_hidden_layers,
-                        number_neurons_per_layer=number_neurons_per_layer,
+        self.add_layers(number_neurons_per_layer=number_neurons_per_layer,
                         activation_function=activation_function)
-        self.compile_model(optimizer=optimizer)
         self.training = np.array([])
         self.output = np.array([])
-        self.track = 0
+        self.training_init(number_train_sets, number_neurons_per_layer[0])
+        self.initial_weights = None
 
-    def add_layers(self, input_layer_size, number_hidden_layers, number_neurons_per_layer, activation_function):
-        if len(number_neurons_per_layer) != number_hidden_layers:
-            print('Number of hidden layers and length of neurons per layer not the same!')
-            sys.exit(1)
-        self.model.add(Input(shape=(input_layer_size,)))
-        if number_hidden_layers > 0:
-            for i in range(number_hidden_layers):
+    def add_layers(self, number_neurons_per_layer, activation_function):
+        self.model.add(Input(shape=(number_neurons_per_layer[0],)))
+        if len(number_neurons_per_layer) > 2:
+            for i in range(1, len(number_neurons_per_layer) - 1):
                 self.model.add(Dense(units=number_neurons_per_layer[i],
                                      activation=activation_function,
                                      kernel_initializer=HeNormal()))
-        self.model.add(Dense(units=input_layer_size, activation=None, kernel_initializer=HeNormal()))
+        self.model.add(Dense(units=number_neurons_per_layer[-1],
+                             activation=None,
+                             kernel_initializer=HeNormal()))
         return
 
-    def compile_model(self, optimizer):
-        self.model.compile(optimizer=optimizer, loss=self.custom_mse, metrics=None)
-        return
-
-    def custom_mse(self, y_true_t, y_pred_t):
-        if self.track > self.training.shape[0]:
-            self.track = 0
-
-        def compute_mse_for_sample(y_true, y_pred):
-            input_layer = self.training[self.track, :][tf.newaxis, :]
-            with tf.GradientTape() as g:
-                g.watch(input_layer)
-                with tf.GradientTape(persistent=True) as gg:
-                    gg.watch(input_layer)
-                    u_pred = self.model(input_layer)
-                du_dx = gg.gradient(u_pred, input_layer)
-                del gg
-            d2u_dx2 = g.gradient(du_dx, input_layer)
-            del g
-            mse_sample = (
-                    tf.reduce_mean(tf.square(d2u_dx2[0, 1:-1] + self.c / self.A / self.E * input_layer[0, 1:-1])) +
-                    tf.square(u_pred[0, 0]) +
-                    tf.square(du_dx[0, -1])
-            )
-            self.track += 1
-            return mse_sample
-
-        mse = tf.map_fn(lambda true_pred: compute_mse_for_sample(true_pred[0], true_pred[1]),
-                        (y_true_t, y_pred_t),
-                        dtype=tf.float32)
-        mse = tf.reduce_mean(mse)
-        return mse
-
-    # def custom_metric(self, x, u):
-    #     def compute_metric_for_sample(x_i, u_i):
-    #         x_i = x_i[tf.newaxis, :]
-    #         u_i = u_i[tf.newaxis, :]
-    #         u_pred = self.model(x_i)
-    #
-    #         return u_pred - u_i
-    #
-    #     metric = tf.map_fn(lambda x_u: compute_metric_for_sample(x_u[0], x_u[1]), (x, u), dtype=tf.float32)
-    #     return tf.reduce_mean(metric)
-
-    def training_init(self, number_train_points, number_train_sets):
-        if number_train_points < 2:
-            print('Not enough training samples (2)!')
-            sys.exit(1)
-        self.training = np.zeros([number_train_sets, number_train_points])
-        self.output = np.zeros([number_train_sets, number_train_points])
+    def training_init(self, number_train_sets, number_train_points):
+        self.training = np.zeros([number_train_sets, number_train_points], dtype=np.float32)
+        self.output = np.zeros([number_train_sets, number_train_points], dtype=np.float32)
         for i in range(number_train_sets):
             vals = self.training_data(number_train_points=number_train_points)
             self.training[i, :] = vals
-        self.training = tf.convert_to_tensor(self.training, dtype=tf.float32)
-        self.output = tf.convert_to_tensor(self.output, dtype=tf.float32)
         return
 
     def training_data(self, number_train_points):
-        x_train = self.L * np.random.rand(number_train_points - 2)  # Random collocation points in (0, L)
+        x_train = self.L * np.random.rand(number_train_points - 2).astype(np.float32)  # Random collocation points in (0, L)
         x_train = np.sort(x_train, axis=0)  # Sort to maintain order for boundary conditions
         x_train = np.append(np.array([0]), x_train, axis=0)  # First point (boundary condition)
         x_train = np.append(x_train, np.array([self.L]), axis=0)  # Last point (boundary condition)
         return x_train
 
-    def train_network(self, batch_size=32, epochs=100):
-        start = time.time()
-        self.model.fit(self.training, self.output, epochs=epochs, batch_size=batch_size, verbose=1)
-        return time.time() - start
+    def train_network(self, optimizer=None, batch_size=1, epochs=1):
+        self.training = tf.data.Dataset.from_tensor_slices(self.training)
+        self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
+        self.initial_weights = tf.keras.backend.get_value(self.model.trainable_variables)
+        x_test = np.random.rand(13).astype(np.float32)
+        x_test = np.sort(x_test, axis=0)  # Sort to maintain order for boundary conditions
+        x_test = np.append(np.array([0]), x_test, axis=0)
+        x_test = np.append(x_test, np.array([self.L]), axis=0)
+        x_test = np.reshape(x_test, (1, 15))
+        u_real = np.array([self.analytic_solution(x) for x in x_test])
+
+        figure, ax = plt.subplots(figsize=(10, 8))
+        line1, = ax.plot(x_test.reshape(15, ), u_real.reshape(15, ))
+        line2, = ax.plot(x_test.reshape(15, ), u_real.reshape(15, ))
+        ax.set_ylim(-2, 2)
+        plt.ion()
+        plt.show()
+
+        for epoch in range(epochs):
+            print(f"Epoch: {epoch}/{epochs - 1}")
+            for step, train_batch in enumerate(self.training):
+                print(f"Step: {step}/{len(self.training) - 1}")
+                grads = GradientLayer(self.model)
+                with tf.GradientTape() as tape:
+                    # Loss computation
+                    u, du_dx, d2u_dx2 = grads(train_batch)
+                    loss = []
+                    for sample in range(len(train_batch)):
+                        loss.append([
+                            tf.reduce_mean(
+                                tf.square(self.A * self.E * d2u_dx2[sample, 1:-1] + self.c * train_batch[sample, 1:-1])
+                            ) + tf.square(u[sample, 0]) + tf.square(du_dx[sample, -1])
+                        ])
+                    loss = tf.reduce_mean(loss)
+                print(f"Loss: {loss.numpy()}")
+                print(f"Real Loss: {tf.reduce_mean(tf.square(self.model(x_test) - u_real))}")
+                # Compute gradients of the loss with respect to the trainable variables
+                gradients = tape.gradient(loss, self.model.trainable_variables)
+                # Apply the gradients to update weights and biases
+                optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+
+                line1.set_xdata(x_test.reshape(15, ))
+                line1.set_ydata(self.model(x_test).numpy().reshape(15, ))
+                figure.canvas.draw()
+                figure.canvas.flush_events()
+        return
 
     def analytic_solution(self, x):
         return self.c / 6.0 / self.A / self.E * (-(x ** 3) + 3 * (self.L ** 3) * x)
 
 
 if __name__ == "__main__":
-    nn = NeuralNetwork(15,
-                       3,
-                       [30, 60, 30],
-                       'sigmoid',  # relu always return 0 for second derivative
-                       'adam',
-                       1.0,
-                       1.0,
-                       1.0,
-                       1.0)
-    nn.training_init(number_train_points=15, number_train_sets=10000)
-    print(nn.train_network(batch_size=1, epochs=1))
-
-    x_new = np.linspace(0, 1.0, 15)
-    x_new = np.reshape(x_new, (1, 15))
-    u_pred = nn.model.predict(x_new)
-
-    u_real = [nn.analytic_solution(x) for x in x_new]
+    nn = NeuralNetwork(number_neurons_per_layer=[15, 30, 60, 30, 15],
+                       number_train_sets=10000,
+                       activation_function='sigmoid',
+                       cross_section_area=1,
+                       youngs_modulus=1,
+                       constant=1,
+                       length=1)
+    nn.train_network(optimizer=tf.keras.optimizers.Adam(),
+                     batch_size=16,
+                     epochs=10)
+    print('Breakpoint here: Try different test data points')
