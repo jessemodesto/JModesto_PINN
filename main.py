@@ -131,13 +131,13 @@ class GradientLayer(tf.keras.layers.Layer):
         self.model = model
 
     def call(self, x):
-        with tf.GradientTape() as g2:  # Tape for second derivative
-            g2.watch(x)
-            with tf.GradientTape() as g1:  # Tape for first derivative
-                g1.watch(x)
+        with tf.GradientTape() as t2:  # Tape for second derivative
+            t2.watch(x)
+            with tf.GradientTape() as t1:  # Tape for first derivative
+                t1.watch(x)
                 u = self.model(x)  # Forward pass to get u(x)
-            du_dx = g1.gradient(u, x)  # First derivative du/dx
-        d2u_dx2 = g2.gradient(du_dx, x)  # Second derivative d²u/dx²
+            du_dx = t1.gradient(u, x)  # First derivative du/dx
+        d2u_dx2 = t2.gradient(du_dx, x)  # Second derivative d²u/dx²
         return u, du_dx, d2u_dx2
 
 
@@ -148,36 +148,36 @@ class NeuralNetwork:
         self.E = youngs_modulus
         self.c = constant
         self.L = length
+        self.number_neurons_per_layer = number_neurons_per_layer
         self.model = Sequential()
-        self.add_layers(number_neurons_per_layer=number_neurons_per_layer,
-                        activation_function=activation_function)
+        self.add_layers(activation_function=activation_function)
         self.training = np.array([])
         self.output = np.array([])
-        self.training_init(number_train_sets, number_neurons_per_layer[0])
+        self.training_init(number_train_sets)
         self.initial_weights = None
 
-    def add_layers(self, number_neurons_per_layer, activation_function):
-        self.model.add(Input(shape=(number_neurons_per_layer[0],)))
-        if len(number_neurons_per_layer) > 2:
-            for i in range(1, len(number_neurons_per_layer) - 1):
-                self.model.add(Dense(units=number_neurons_per_layer[i],
+    def add_layers(self, activation_function):
+        self.model.add(Input(shape=(self.number_neurons_per_layer[0],)))
+        if len(self.number_neurons_per_layer) > 2:
+            for i in range(1, len(self.number_neurons_per_layer) - 1):
+                self.model.add(Dense(units=self.number_neurons_per_layer[i],
                                      activation=activation_function,
                                      kernel_initializer=HeNormal()))
-        self.model.add(Dense(units=number_neurons_per_layer[-1],
+        self.model.add(Dense(units=self.number_neurons_per_layer[-1],
                              activation=None,
                              kernel_initializer=HeNormal()))
         return
 
-    def training_init(self, number_train_sets, number_train_points):
-        self.training = np.zeros([number_train_sets, number_train_points], dtype=np.float32)
-        self.output = np.zeros([number_train_sets, number_train_points], dtype=np.float32)
+    def training_init(self, number_train_sets):
+        self.training = np.zeros([number_train_sets, self.number_neurons_per_layer[0]], dtype=np.float32)
+        self.output = np.zeros([number_train_sets, self.number_neurons_per_layer[0]], dtype=np.float32)
         for i in range(number_train_sets):
-            vals = self.training_data(number_train_points=number_train_points)
+            vals = self.training_data()
             self.training[i, :] = vals
         return
 
-    def training_data(self, number_train_points):
-        x_train = self.L * np.random.rand(number_train_points - 2).astype(np.float32)  # Random collocation points in (0, L)
+    def training_data(self):
+        x_train = self.L * np.random.rand(self.number_neurons_per_layer[0] - 2).astype(np.float32)  # Random collocation points in (0, L)
         x_train = np.sort(x_train, axis=0)  # Sort to maintain order for boundary conditions
         x_train = np.append(np.array([0]), x_train, axis=0)  # First point (boundary condition)
         x_train = np.append(x_train, np.array([self.L]), axis=0)  # Last point (boundary condition)
@@ -187,16 +187,15 @@ class NeuralNetwork:
         self.training = tf.data.Dataset.from_tensor_slices(self.training)
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
         self.initial_weights = tf.keras.backend.get_value(self.model.trainable_variables)
-        x_test = np.random.rand(13).astype(np.float32)
-        x_test = np.sort(x_test, axis=0)  # Sort to maintain order for boundary conditions
-        x_test = np.append(np.array([0]), x_test, axis=0)
-        x_test = np.append(x_test, np.array([self.L]), axis=0)
-        x_test = np.reshape(x_test, (1, 15))
-        u_real = np.array([self.analytic_solution(x) for x in x_test])
-
+        x_test = np.random.rand(10, 1).astype(np.float32)
+        x_test = np.sort(x_test, axis=0)
+        x_test_modified = np.zeros((10, 3), dtype=np.float32)
+        for i in range(len(x_test)):
+            # Add 0 as the first element, x_test[i] as the middle element, and self.L as the last element
+            x_test_modified[i] = np.array([0, x_test[i][0], self.L])
         figure, ax = plt.subplots(figsize=(10, 8))
-        line1, = ax.plot(x_test.reshape(15, ), u_real.reshape(15, ))
-        line2, = ax.plot(x_test.reshape(15, ), u_real.reshape(15, ))
+        line1, = ax.plot([x[1] for x in x_test_modified], [self.analytic_solution(x[1]) for x in x_test_modified])
+        line2, = ax.plot([x[1] for x in x_test_modified], [0 for _ in x_test_modified])
         ax.set_ylim(-2, 2)
         plt.ion()
         plt.show()
@@ -205,27 +204,27 @@ class NeuralNetwork:
             print(f"Epoch: {epoch}/{epochs - 1}")
             for step, train_batch in enumerate(self.training):
                 print(f"Step: {step}/{len(self.training) - 1}")
-                grads = GradientLayer(self.model)
+                loss = []
+                for sample in train_batch:
+                    input_tensor = tf.keras.Input(shape=(sample.shape[-1],))
+                    model_with_input = tf.keras.models.Model(inputs=input_tensor, outputs=self.model(input_tensor))
+                    grads = GradientLayer(model_with_input)
                 with tf.GradientTape() as tape:
-                    # Loss computation
-                    u, du_dx, d2u_dx2 = grads(train_batch)
-                    loss = []
-                    for sample in range(len(train_batch)):
-                        loss.append([
-                            tf.reduce_mean(
-                                tf.square(self.A * self.E * d2u_dx2[sample, 1:-1] + self.c * train_batch[sample, 1:-1])
-                            ) + tf.square(u[sample, 0]) + tf.square(du_dx[sample, -1])
-                        ])
+                    u, du_dx, d2u_dx2 = grads(sample[tf.newaxis, :])
+                    loss.append([
+                        tf.reduce_mean(
+                            tf.square(self.A * self.E * d2u_dx2[0, 1:-1] + self.c * sample[1:-1])
+                        ) + tf.square(u[0, 0]) + tf.square(du_dx[0, -1])
+                    ])
                     loss = tf.reduce_mean(loss)
                 print(f"Loss: {loss.numpy()}")
-                print(f"Real Loss: {tf.reduce_mean(tf.square(self.model(x_test) - u_real))}")
+                # print(f"Real Loss: {tf.reduce_mean(tf.square(self.model(x_test) - u_real))}")
                 # Compute gradients of the loss with respect to the trainable variables
                 gradients = tape.gradient(loss, self.model.trainable_variables)
                 # Apply the gradients to update weights and biases
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
-                line1.set_xdata(x_test.reshape(15, ))
-                line1.set_ydata(self.model(x_test).numpy().reshape(15, ))
+                line2.set_ydata([self.model(x.reshape(1, 3)).numpy()[0, 1] for x in x_test_modified])
                 figure.canvas.draw()
                 figure.canvas.flush_events()
         return
@@ -235,7 +234,7 @@ class NeuralNetwork:
 
 
 if __name__ == "__main__":
-    nn = NeuralNetwork(number_neurons_per_layer=[15, 30, 60, 30, 15],
+    nn = NeuralNetwork(number_neurons_per_layer=[3, 15, 30, 60, 30, 15, 3],
                        number_train_sets=10000,
                        activation_function='sigmoid',
                        cross_section_area=1,
