@@ -1,3 +1,5 @@
+import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Input
@@ -6,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use("QtAgg")
+
 
 class Numerical:
     def __init__(self, total_number_elements, gauss_points, length,
@@ -177,7 +180,7 @@ class NeuralNetwork:
         return
 
     def training_data(self):
-        x_train = self.L * np.random.rand(self.number_neurons_per_layer[0] - 2).astype(np.float32)  # Random collocation points in (0, L)
+        x_train = self.L * np.random.rand(self.number_neurons_per_layer[0] - 2).astype(np.float32)
         x_train = np.sort(x_train, axis=0)  # Sort to maintain order for boundary conditions
         x_train = np.append(np.array([0]), x_train, axis=0)  # First point (boundary condition)
         x_train = np.append(x_train, np.array([self.L]), axis=0)  # Last point (boundary condition)
@@ -200,22 +203,22 @@ class NeuralNetwork:
         plt.ion()
         plt.show()
 
+        input_tensor = tf.keras.Input(shape=(self.number_neurons_per_layer[0],))
+        model_with_input = tf.keras.models.Model(inputs=input_tensor, outputs=self.model(input_tensor))
+        grads = GradientLayer(model_with_input)
         for epoch in range(epochs):
             print(f"Epoch: {epoch}/{epochs - 1}")
             for step, train_batch in enumerate(self.training):
                 print(f"Step: {step}/{len(self.training) - 1}")
                 loss = []
-                for sample in train_batch:
-                    input_tensor = tf.keras.Input(shape=(sample.shape[-1],))
-                    model_with_input = tf.keras.models.Model(inputs=input_tensor, outputs=self.model(input_tensor))
-                    grads = GradientLayer(model_with_input)
                 with tf.GradientTape() as tape:
-                    u, du_dx, d2u_dx2 = grads(sample[tf.newaxis, :])
-                    loss.append([
-                        tf.reduce_mean(
-                            tf.square(self.A * self.E * d2u_dx2[0, 1:-1] + self.c * sample[1:-1])
-                        ) + tf.square(u[0, 0]) + tf.square(du_dx[0, -1])
-                    ])
+                    for sample in train_batch:
+                        u, du_dx, d2u_dx2 = grads(sample[tf.newaxis, :])
+                        loss.append([
+                            tf.reduce_mean(
+                                tf.square(self.A * self.E * d2u_dx2[0, 1:-1] + self.c * u[0, 1:-1])
+                            ) + tf.square(u[0, 0]) + tf.square(du_dx[0, -1])
+                        ])
                     loss = tf.reduce_mean(loss)
                 print(f"Loss: {loss.numpy()}")
                 # print(f"Real Loss: {tf.reduce_mean(tf.square(self.model(x_test) - u_real))}")
@@ -235,7 +238,7 @@ class NeuralNetwork:
 
 if __name__ == "__main__":
     nn = NeuralNetwork(number_neurons_per_layer=[3, 15, 30, 60, 30, 15, 3],
-                       number_train_sets=10000,
+                       number_train_sets=1000,
                        activation_function='sigmoid',
                        cross_section_area=1,
                        youngs_modulus=1,
@@ -243,5 +246,5 @@ if __name__ == "__main__":
                        length=1)
     nn.train_network(optimizer=tf.keras.optimizers.Adam(),
                      batch_size=16,
-                     epochs=10)
+                     epochs=100)
     print('Breakpoint here: Try different test data points')
