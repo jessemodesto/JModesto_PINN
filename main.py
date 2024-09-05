@@ -128,22 +128,6 @@ class Numerical:
         # norm_value = top / bottom
 
 
-class GradientLayer(tf.keras.layers.Layer):
-    def __init__(self, model):
-        super(GradientLayer, self).__init__()
-        self.model = model
-
-    def call(self, x):
-        with tf.GradientTape() as t2:  # Tape for second derivative
-            t2.watch(x)
-            with tf.GradientTape() as t1:  # Tape for first derivative
-                t1.watch(x)
-                u = self.model(x)  # Forward pass to get u(x)
-            du_dx = t1.gradient(u, x)  # First derivative du/dx
-        d2u_dx2 = t2.gradient(du_dx, x)  # Second derivative d²u/dx²
-        return u, du_dx, d2u_dx2
-
-
 class NeuralNetwork:
     def __init__(self, number_neurons_per_layer, number_train_sets, activation_function,
                  cross_section_area, youngs_modulus, constant, length):
@@ -186,16 +170,33 @@ class NeuralNetwork:
         x_train = np.append(x_train, np.array([self.L]), axis=0)  # Last point (boundary condition)
         return x_train
 
+    def train_loss(self, x, model):
+        x = tf.constant(x, dtype=tf.float32)
+        with tf.GradientTape() as t2:  # Tape for second derivative
+            t2.watch(x)
+            with tf.GradientTape() as t1:  # Tape for first derivative
+                t1.watch(x)
+                u = model(x)  # Forward pass to get u(x)
+            du_dx = t1.gradient(u, x)
+        d2u_dx2 = t2.gradient(du_dx, x)
+        print(f"Displacement @ x=0: {u[0, 0]}")
+        print(f"First derivative @ x=0 (1/2): {du_dx[0, 0]}")
+        print(f"First derivative @ x=L (0): {du_dx[0, -1]}")
+        print(f"Second derivative @ x=0 (0): {d2u_dx2[0, 0]}")
+        print(f"Second derivative @ x=L (-1): {d2u_dx2[0, -1]}")
+        return u, du_dx, d2u_dx2
+
     def train_network(self, optimizer=None, batch_size=1, epochs=1):
         self.training = tf.data.Dataset.from_tensor_slices(self.training)
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
         self.initial_weights = tf.keras.backend.get_value(self.model.trainable_variables)
+
         x_test = np.random.rand(10, 1).astype(np.float32)
         x_test = np.sort(x_test, axis=0)
         x_test_modified = np.zeros((10, 3), dtype=np.float32)
         for i in range(len(x_test)):
-            # Add 0 as the first element, x_test[i] as the middle element, and self.L as the last element
             x_test_modified[i] = np.array([0, x_test[i][0], self.L])
+
         figure, ax = plt.subplots(figsize=(10, 8))
         line1, = ax.plot([x[1] for x in x_test_modified], [self.analytic_solution(x[1]) for x in x_test_modified])
         line2, = ax.plot([x[1] for x in x_test_modified], [0 for _ in x_test_modified])
@@ -203,29 +204,23 @@ class NeuralNetwork:
         plt.ion()
         plt.show()
 
-        input_tensor = tf.keras.Input(shape=(self.number_neurons_per_layer[0],))
-        model_with_input = tf.keras.models.Model(inputs=input_tensor, outputs=self.model(input_tensor))
-        grads = GradientLayer(model_with_input)
         for epoch in range(epochs):
             print(f"Epoch: {epoch}/{epochs - 1}")
             for step, train_batch in enumerate(self.training):
                 print(f"Step: {step}/{len(self.training) - 1}")
                 loss = []
-                with tf.GradientTape() as tape:
+                with tf.GradientTape(persistent=True) as tape:
                     for sample in train_batch:
-                        u, du_dx, d2u_dx2 = grads(sample[tf.newaxis, :])
+                        u, du_dx, d2u_dx2 = self.train_loss(sample[tf.newaxis, :], self.model)
                         loss.append([
                             tf.reduce_mean(
                                 tf.square(self.A * self.E * d2u_dx2[0, 1:-1] + self.c * u[0, 1:-1])
                             ) + tf.square(u[0, 0]) + tf.square(du_dx[0, -1])
                         ])
-                    loss = tf.reduce_mean(loss)
-                print(f"Loss: {loss.numpy()}")
-                # print(f"Real Loss: {tf.reduce_mean(tf.square(self.model(x_test) - u_real))}")
-                # Compute gradients of the loss with respect to the trainable variables
+                    loss = tf.reduce_sum(loss)
                 gradients = tape.gradient(loss, self.model.trainable_variables)
-                # Apply the gradients to update weights and biases
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+                print(f"Loss: {loss.numpy()}")
 
                 line2.set_ydata([self.model(x.reshape(1, 3)).numpy()[0, 1] for x in x_test_modified])
                 figure.canvas.draw()
@@ -233,18 +228,19 @@ class NeuralNetwork:
         return
 
     def analytic_solution(self, x):
-        return self.c / 6.0 / self.A / self.E * (-(x ** 3) + 3 * (self.L ** 3) * x)
+        return self.c / 6.0 / self.A / self.E * (-(x ** 3) + (3 * (self.L ** 2) * x))
 
 
 if __name__ == "__main__":
     nn = NeuralNetwork(number_neurons_per_layer=[3, 15, 30, 60, 30, 15, 3],
                        number_train_sets=1000,
-                       activation_function='sigmoid',
+                       activation_function='tanh',
                        cross_section_area=1,
                        youngs_modulus=1,
                        constant=1,
                        length=1)
     nn.train_network(optimizer=tf.keras.optimizers.Adam(),
                      batch_size=16,
-                     epochs=100)
+                     epochs=1000)
     print('Breakpoint here: Try different test data points')
+    print('more')
