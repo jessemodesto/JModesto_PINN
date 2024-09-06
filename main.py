@@ -164,14 +164,11 @@ class NeuralNetwork:
         return
 
     def training_data(self):
-        x_train = self.L * np.random.rand(self.number_neurons_per_layer[0] - 2).astype(np.float32)
-        x_train = np.sort(x_train, axis=0)  # Sort to maintain order for boundary conditions
-        x_train = np.append(np.array([0]), x_train, axis=0)  # First point (boundary condition)
-        x_train = np.append(x_train, np.array([self.L]), axis=0)  # Last point (boundary condition)
+        x_train = self.L * np.random.rand(self.number_neurons_per_layer[0]).astype(np.float32)
+        x_train = np.sort(x_train, axis=0)
         return x_train
 
     def train_loss(self, x, model):
-        x = tf.constant(x, dtype=tf.float32)
         with tf.GradientTape() as t2:  # Tape for second derivative
             t2.watch(x)
             with tf.GradientTape() as t1:  # Tape for first derivative
@@ -179,31 +176,25 @@ class NeuralNetwork:
                 u = model(x)  # Forward pass to get u(x)
             du_dx = t1.gradient(u, x)
         d2u_dx2 = t2.gradient(du_dx, x)
-        print(f"Displacement @ x=0: {u[0, 0]}")
-        print(f"First derivative @ x=0 (1/2): {du_dx[0, 0]}")
-        print(f"First derivative @ x=L (0): {du_dx[0, -1]}")
-        print(f"Second derivative @ x=0 (0): {d2u_dx2[0, 0]}")
-        print(f"Second derivative @ x=L (-1): {d2u_dx2[0, -1]}")
-        return u, du_dx, d2u_dx2
+        return du_dx, d2u_dx2
 
     def train_network(self, optimizer=None, batch_size=1, epochs=1):
         self.training = tf.data.Dataset.from_tensor_slices(self.training)
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
         self.initial_weights = tf.keras.backend.get_value(self.model.trainable_variables)
 
-        x_test = np.random.rand(10, 1).astype(np.float32)
+        x_test = np.linspace(0, 1, 10).astype(np.float32)
         x_test = np.sort(x_test, axis=0)
-        x_test_modified = np.zeros((10, 3), dtype=np.float32)
-        for i in range(len(x_test)):
-            x_test_modified[i] = np.array([0, x_test[i][0], self.L])
 
         figure, ax = plt.subplots(figsize=(10, 8))
-        line1, = ax.plot([x[1] for x in x_test_modified], [self.analytic_solution(x[1]) for x in x_test_modified])
-        line2, = ax.plot([x[1] for x in x_test_modified], [0 for _ in x_test_modified])
+        line1, = ax.plot(x_test, [self.analytic_solution(x) for x in x_test])
+        line2, = ax.plot(x_test, [0 for _ in x_test])
         ax.set_ylim(-2, 2)
         plt.ion()
         plt.show()
 
+        L = tf.constant([self.L], dtype=tf.float32)
+        zero = tf.constant([0.], dtype=tf.float32)
         for epoch in range(epochs):
             print(f"Epoch: {epoch}/{epochs - 1}")
             for step, train_batch in enumerate(self.training):
@@ -211,18 +202,16 @@ class NeuralNetwork:
                 loss = []
                 with tf.GradientTape(persistent=True) as tape:
                     for sample in train_batch:
-                        u, du_dx, d2u_dx2 = self.train_loss(sample[tf.newaxis, :], self.model)
-                        loss.append([
-                            tf.reduce_mean(
-                                tf.square(self.A * self.E * d2u_dx2[0, 1:-1] + self.c * u[0, 1:-1])
-                            ) + tf.square(u[0, 0]) + tf.square(du_dx[0, -1])
-                        ])
-                    loss = tf.reduce_sum(loss)
+                        _, d2u_dx2 = self.train_loss(sample[tf.newaxis, :], self.model)
+                        loss.append([tf.square(self.A * self.E * d2u_dx2 + self.c * self.model(sample[tf.newaxis, :]))])
+                    du_dx, _ = self.train_loss(L, self.model)
+                    loss = tf.reduce_mean(loss) + tf.square(self.model(zero)) + tf.square(du_dx)
                 gradients = tape.gradient(loss, self.model.trainable_variables)
+                del tape
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-                print(f"Loss: {loss.numpy()}")
+                print(f"Loss: {loss.numpy()[0][0]}")
 
-                line2.set_ydata([self.model(x.reshape(1, 3)).numpy()[0, 1] for x in x_test_modified])
+                line2.set_ydata([self.model(x.reshape(1,1)).numpy()[0] for x in x_test])
                 figure.canvas.draw()
                 figure.canvas.flush_events()
         return
@@ -232,7 +221,7 @@ class NeuralNetwork:
 
 
 if __name__ == "__main__":
-    nn = NeuralNetwork(number_neurons_per_layer=[3, 15, 30, 60, 30, 15, 3],
+    nn = NeuralNetwork(number_neurons_per_layer=[1, 15, 30, 60, 30, 15, 1],
                        number_train_sets=1000,
                        activation_function='tanh',
                        cross_section_area=1,
