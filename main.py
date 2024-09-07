@@ -1,5 +1,4 @@
 import os
-
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
@@ -8,7 +7,7 @@ from tensorflow.keras.initializers import HeNormal
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-
+# Comment out of PyQt is not installed
 matplotlib.use("QtAgg")
 
 
@@ -182,7 +181,7 @@ class NeuralNetwork:
         d2u_dx2 = t2.gradient(du_dx, x)
         return du_dx, d2u_dx2
 
-    def train_network(self, optimizer=None, batch_size=1, epochs=1):
+    def train_network(self, optimizer=tf.keras.optimizers.Adam(), batch_size=1, epochs=1):
         self.training = tf.data.Dataset.from_tensor_slices(self.training)
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
         number_of_batches = len(self.training)
@@ -208,7 +207,7 @@ class NeuralNetwork:
                 with tf.GradientTape() as tape:
                     _, d2u_dx2 = self.train_loss(train_batch)
                     du_dx, _ = self.train_loss(L)
-                    loss = tf.reduce_mean(tf.square(self.A * self.E * d2u_dx2 + self.c * self.model(train_batch))) + \
+                    loss = tf.reduce_mean(tf.square(self.A * self.E * d2u_dx2 + self.c * train_batch)) + \
                            tf.square(self.model(zero)) + \
                            tf.square(du_dx)
                 gradients = tape.gradient(loss, self.model.trainable_variables)
@@ -235,6 +234,5 @@ if __name__ == "__main__":
                        length=1.0)
     nn.train_network(optimizer=tf.keras.optimizers.Adam(),
                      batch_size=16,
-                     epochs=100)
+                     epochs=400)
     print('Breakpoint here: Try different test data points')
-    print('more')
