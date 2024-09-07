@@ -1,4 +1,5 @@
 import os
+
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
@@ -7,6 +8,7 @@ from tensorflow.keras.initializers import HeNormal
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
+
 matplotlib.use("QtAgg")
 
 
@@ -144,36 +146,38 @@ class NeuralNetwork:
         self.initial_weights = None
 
     def add_layers(self, activation_function):
-        self.model.add(Input(shape=(self.number_neurons_per_layer[0],)))
+        self.model.add(Input(shape=(self.number_neurons_per_layer[0],), dtype='float64'))
         if len(self.number_neurons_per_layer) > 2:
             for i in range(1, len(self.number_neurons_per_layer) - 1):
                 self.model.add(Dense(units=self.number_neurons_per_layer[i],
                                      activation=activation_function,
-                                     kernel_initializer=HeNormal()))
+                                     kernel_initializer=HeNormal(),
+                                     dtype='float64'))
         self.model.add(Dense(units=self.number_neurons_per_layer[-1],
                              activation=None,
-                             kernel_initializer=HeNormal()))
+                             kernel_initializer=HeNormal(),
+                             dtype='float64'))
         return
 
     def training_init(self, number_train_sets):
-        self.training = np.zeros([number_train_sets, self.number_neurons_per_layer[0]], dtype=np.float32)
-        self.output = np.zeros([number_train_sets, self.number_neurons_per_layer[0]], dtype=np.float32)
+        self.training = np.zeros([number_train_sets, self.number_neurons_per_layer[0]], dtype=np.float64)
+        self.output = np.zeros([number_train_sets, self.number_neurons_per_layer[0]], dtype=np.float64)
         for i in range(number_train_sets):
             vals = self.training_data()
             self.training[i, :] = vals
         return
 
     def training_data(self):
-        x_train = self.L * np.random.rand(self.number_neurons_per_layer[0]).astype(np.float32)
+        x_train = self.L * np.random.rand(self.number_neurons_per_layer[0]).astype(np.float64)
         x_train = np.sort(x_train, axis=0)
         return x_train
 
-    def train_loss(self, x, model):
+    def train_loss(self, x):
         with tf.GradientTape() as t2:  # Tape for second derivative
             t2.watch(x)
             with tf.GradientTape() as t1:  # Tape for first derivative
                 t1.watch(x)
-                u = model(x)  # Forward pass to get u(x)
+                u = self.model(x)  # Forward pass to get u(x)
             du_dx = t1.gradient(u, x)
         d2u_dx2 = t2.gradient(du_dx, x)
         return du_dx, d2u_dx2
@@ -181,9 +185,10 @@ class NeuralNetwork:
     def train_network(self, optimizer=None, batch_size=1, epochs=1):
         self.training = tf.data.Dataset.from_tensor_slices(self.training)
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
+        number_of_batches = len(self.training)
         self.initial_weights = tf.keras.backend.get_value(self.model.trainable_variables)
 
-        x_test = np.linspace(0, 1, 10).astype(np.float32)
+        x_test = np.linspace(0, 1, 10).astype(np.float64)
         x_test = np.sort(x_test, axis=0)
 
         figure, ax = plt.subplots(figsize=(10, 8))
@@ -193,27 +198,27 @@ class NeuralNetwork:
         plt.ion()
         plt.show()
 
-        L = tf.constant([self.L], dtype=tf.float32)
-        zero = tf.constant([0.], dtype=tf.float32)
+        L = tf.constant(self.L, shape=(1, 1), dtype=tf.float64)
+        zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
         for epoch in range(epochs):
-            print(f"Epoch: {epoch}/{epochs - 1}")
-            for step, train_batch in enumerate(self.training):
-                print(f"Step: {step}/{len(self.training) - 1}")
-                loss = []
-                with tf.GradientTape(persistent=True) as tape:
-                    for sample in train_batch:
-                        _, d2u_dx2 = self.train_loss(sample[tf.newaxis, :], self.model)
-                        loss.append([tf.square(self.A * self.E * d2u_dx2 + self.c * self.model(sample[tf.newaxis, :]))])
-                    du_dx, _ = self.train_loss(L, self.model)
-                    loss = tf.reduce_mean(loss) + tf.square(self.model(zero)) + tf.square(du_dx)
+            print(f"Epoch: {epoch + 1}/{epochs}")
+            step = 0
+            for train_batch in self.training:
+                print(f"Step: {step + 1}/{number_of_batches}")
+                with tf.GradientTape() as tape:
+                    _, d2u_dx2 = self.train_loss(train_batch)
+                    du_dx, _ = self.train_loss(L)
+                    loss = tf.reduce_mean(tf.square(self.A * self.E * d2u_dx2 + self.c * self.model(train_batch))) + \
+                           tf.square(self.model(zero)) + \
+                           tf.square(du_dx)
                 gradients = tape.gradient(loss, self.model.trainable_variables)
-                del tape
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
                 print(f"Loss: {loss.numpy()[0][0]}")
 
-                line2.set_ydata([self.model(x.reshape(1,1)).numpy()[0] for x in x_test])
+                line2.set_ydata([self.model(x.reshape(1, 1)).numpy()[0] for x in x_test])
                 figure.canvas.draw()
                 figure.canvas.flush_events()
+                step += 1
         return
 
     def analytic_solution(self, x):
@@ -221,15 +226,15 @@ class NeuralNetwork:
 
 
 if __name__ == "__main__":
-    nn = NeuralNetwork(number_neurons_per_layer=[1, 15, 30, 60, 30, 15, 1],
+    nn = NeuralNetwork(number_neurons_per_layer=[1, 30, 60, 30, 1],
                        number_train_sets=1000,
                        activation_function='tanh',
-                       cross_section_area=1,
-                       youngs_modulus=1,
-                       constant=1,
-                       length=1)
+                       cross_section_area=1.0,
+                       youngs_modulus=1.0,
+                       constant=1.0,
+                       length=1.0)
     nn.train_network(optimizer=tf.keras.optimizers.Adam(),
                      batch_size=16,
-                     epochs=1000)
+                     epochs=100)
     print('Breakpoint here: Try different test data points')
     print('more')
