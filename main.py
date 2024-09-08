@@ -7,8 +7,7 @@ from tensorflow.keras.initializers import HeNormal
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-# Comment out of PyQt is not installed
-matplotlib.use("QtAgg")
+matplotlib.use("QtAgg")  # Comment out if PyQt is not installed
 
 
 class Numerical:
@@ -187,23 +186,19 @@ class NeuralNetwork:
         number_of_batches = len(self.training)
         self.initial_weights = tf.keras.backend.get_value(self.model.trainable_variables)
 
-        x_test = np.linspace(0, 1, 10).astype(np.float64)
-        x_test = np.sort(x_test, axis=0)
-
-        figure, ax = plt.subplots(figsize=(10, 8))
-        line1, = ax.plot(x_test, [self.analytic_solution(x) for x in x_test])
-        line2, = ax.plot(x_test, [0 for _ in x_test])
-        ax.set_ylim(-2, 2)
-        plt.ion()
-        plt.show()
+        plot = DynamicPlot()
+        x_test = np.sort(np.linspace(0, 1, 10).astype(np.float64), axis=0)
+        y_test = np.array([self.analytic_solution(x) for x in x_test], dtype=np.float64)
+        plot.plot(((x_test, y_test),
+                   (x_test, np.zeros(len(x_test)))))
+        pbar = tf.keras.utils.Progbar(target=number_of_batches)
 
         L = tf.constant(self.L, shape=(1, 1), dtype=tf.float64)
         zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
         for epoch in range(epochs):
-            print(f"Epoch: {epoch + 1}/{epochs}")
-            step = 0
+            tf.print(f"Epoch: {epoch + 1}/{epochs}")
+            step = 1
             for train_batch in self.training:
-                print(f"Step: {step + 1}/{number_of_batches}")
                 with tf.GradientTape() as tape:
                     _, d2u_dx2 = self.train_loss(train_batch)
                     du_dx, _ = self.train_loss(L)
@@ -212,16 +207,38 @@ class NeuralNetwork:
                            tf.square(du_dx)
                 gradients = tape.gradient(loss, self.model.trainable_variables)
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-                print(f"Loss: {loss.numpy()[0][0]}")
 
-                line2.set_ydata([self.model(x.reshape(1, 1)).numpy()[0] for x in x_test])
-                figure.canvas.draw()
-                figure.canvas.flush_events()
+                test_prediction = np.array([self.model(x.reshape(1, 1)).numpy()[0] for x in x_test], dtype=np.float64)
+                test_loss = np.mean(np.square(test_prediction - y_test), dtype=np.float64)
+                pbar.update(step, values=[('loss', loss), ('test loss', test_loss)])
+                plot.update(y=test_prediction, plot_number=1)
                 step += 1
         return
 
     def analytic_solution(self, x):
         return self.c / 6.0 / self.A / self.E * (-(x ** 3) + (3 * (self.L ** 2) * x))
+
+
+class DynamicPlot:
+    def __init__(self):
+        self.figure, self.ax = plt.subplots(figsize=(10, 8))
+        self.data = {}
+        plt.ion()
+        plt.show()
+
+    def plot(self, pairs):
+        for i in range(len(pairs)):
+            self.data[i] = self.ax.plot(pairs[i][0], pairs[i][1])
+        return
+
+    def update(self, x=None, y=None, plot_number=None):
+        if x is not None:
+            self.data[plot_number][0].set_xdata(x)
+        if y is not None:
+            self.data[plot_number][0].set_ydata(y)
+        self.figure.canvas.draw()
+        self.figure.canvas.flush_events()
+        return
 
 
 if __name__ == "__main__":
