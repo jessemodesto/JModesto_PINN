@@ -1,4 +1,5 @@
 import os
+import sys
 
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import tensorflow as tf
@@ -8,7 +9,6 @@ from tensorflow.keras.initializers import HeNormal
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
-
 matplotlib.use("QtAgg")  # Comment out if PyQt is not installed
 
 
@@ -26,6 +26,7 @@ class NeuralNetwork:
         self.training, self.output = self.training_init(input_layer_size=input_layer_size,  # set test data (float64)
                                                         dependents_test_domains=dependents_test_domains,
                                                         number_train_sets=number_train_sets)
+        self.boundary_conditions = self.read_boundary_conditions(boundary_conditions, dependents_test_domains)
         self.initial_weights = None
 
     def constants_to_float64(self):
@@ -94,8 +95,25 @@ class NeuralNetwork:
                 step += 1
         return
 
-    def analytic_solution(self, x):
-        return self.c / 6.0 / self.A / self.E * (-(x ** 3) + (3 * (self.L ** 2) * x))
+    def read_boundary_conditions(self, boundary_conditions, dependents_test_domains):
+        to_evaluate = ()
+        for i in boundary_conditions:
+            if i['function_type'] == 'derivative':
+                input_layer = i['input_values']
+                value = None
+                for j in input_layer:
+                    if j not in dependents_test_domains.keys():
+                        print('BC dependents mismatch!')
+                        sys.exit(1)
+                    value = input_layer[j]
+                    if isinstance(value, (int, float, complex)):
+                        value = tf.constant(value, shape=(1, 1), dtype=tf.float64)
+                    elif isinstance(value, str):
+                        value = tf.constant(boundary_conditions[value], shape=(1, 1), dtype=tf.float64)
+                to_evaluate = to_evaluate + (Derivative(amount=i['amount'], input_layer=value), )
+            elif i['function_type'] == 'model':
+                pass
+        return to_evaluate
 
 
 class Derivative:
@@ -104,14 +122,14 @@ class Derivative:
         self.amount = amount
         self.input_layer = input_layer
 
-    def derivative(self):
+    def derivative(self, _):
         with tf.GradientTape() as tape:
             tape.watch(self.input_layer)
             if self.amount == 1:
                 value = self.model(self.input_layer)
             else:
                 self.amount -= 1
-                value = self.derivative()
+                value = self.derivative(None)
             output = tape.gradient(value, self.input_layer)
         return output
 
