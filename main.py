@@ -1,40 +1,68 @@
 import os
-import sys
-
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+import types
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.initializers import HeNormal
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import Progbar
 matplotlib.use("QtAgg")  # Comment out if PyQt is not installed
 
 
-class NeuralNetwork:
-    def __init__(self, dependents_test_domains, constants, boundary_conditions,
-                 number_neurons_per_layer, activation_function,
-                 number_train_sets):
-        self.constants = constants  # constants to be used later
-        self.constants_to_float64()  # convert constants to float64
-        self.model = Sequential()  # define Sequential model so that layers can be added
-        input_layer_size = len(dependents_test_domains)  # extract amount of dependent variables
-        self.add_layers(input_layer_size=input_layer_size,  # add layers to the model
-                        number_neurons_per_layer=number_neurons_per_layer,
-                        activation_function=activation_function)
-        self.training, self.output = self.training_init(input_layer_size=input_layer_size,  # set test data (float64)
-                                                        dependents_test_domains=dependents_test_domains,
-                                                        number_train_sets=number_train_sets)
-        self.boundary_conditions = self.read_boundary_conditions(boundary_conditions, dependents_test_domains)
-        self.initial_weights = None
+def derivative(amount: int, model, input_layer):
+    with tf.GradientTape() as tape:
+        tape.watch(input_layer)
+        if amount == 1:
+            value = model(input_layer)
+        else:
+            amount -= 1
+            value = derivative(amount=amount,
+                               model=model,
+                               input_layer=input_layer)
+        output = tape.gradient(value, input_layer)
+    return output
 
-    def constants_to_float64(self):
-        for key in self.constants:
-            self.constants[key] = np.float64(self.constants[key])
+
+class GoverningEquation:
+    def __init__(self):
+        self.parameters = {'constant': {},
+                           'dependent': {}}
+
+    def read_constant(self, constant):
+        for constant_variable in constant:
+            self.parameters['constant'][constant_variable] = np.float64(constant[constant_variable])
         return
 
-    def add_layers(self, input_layer_size, number_neurons_per_layer, activation_function):
+    def read_dependent_domain(self, dependent):
+        for dependent_variable in dependent:
+            lower_bound = dependent[dependent_variable][0]
+            lower_bound = self.parameters['constant'][lower_bound] \
+                if isinstance(lower_bound, str) else np.float64(lower_bound)
+            upper_bound = dependent[dependent_variable][1]
+            upper_bound = self.parameters['constant'][upper_bound] \
+                if isinstance(upper_bound, str) else np.float64(upper_bound)
+            self.parameters['dependent'][dependent_variable] = (lower_bound, upper_bound)
+        return
+
+
+class NeuralNetwork:
+    def __init__(self):
+        self.governing = None
+        self.model = None
+        self.training = None
+        self.output = None
+
+    def set_governing_equation(self, governing_equation):
+        self.governing = governing_equation
+        return
+
+    def set_layers(self, number_neurons_per_layer, activation_function):
+        self.model = Sequential()
+        input_layer_size = len(self.governing.parameters['dependent'])
         self.model.add(Input(shape=(input_layer_size,), dtype='float64'))  # add input layer to model
         if len(number_neurons_per_layer) > 1:  # if at least one hidden layer
             for i in range(0, len(number_neurons_per_layer) - 2):
@@ -48,90 +76,53 @@ class NeuralNetwork:
                              dtype='float64'))
         return
 
-    def training_init(self, input_layer_size, dependents_test_domains, number_train_sets):
-        training = np.zeros([number_train_sets, input_layer_size], dtype=np.float64)  # create input to train
-        output = np.zeros([number_train_sets, input_layer_size], dtype=np.float64)  # create output of model
-        for dependent_variable, j in zip(dependents_test_domains, range(input_layer_size)):
-            lower_bound = dependents_test_domains[dependent_variable][0]
-            lower_bound = self.constants[lower_bound] if isinstance(lower_bound, str) else np.float64(lower_bound)
-            upper_bound = dependents_test_domains[dependent_variable][1]
-            upper_bound = self.constants[upper_bound] if isinstance(upper_bound, str) else np.float64(upper_bound)
-            for i in range(number_train_sets):
-                training[i, j] = np.random.uniform(lower_bound, upper_bound)
-        return training, output
+    def set_training(self, number_train_sets):
+        input_layer_size = len(self.governing.parameters['dependent'])
+        self.training = np.zeros([number_train_sets, input_layer_size], dtype=np.float64)  # create input to train
+        self.output = np.zeros([number_train_sets, input_layer_size], dtype=np.float64)  # create output of model
+        for i, dependent_variable in enumerate(self.governing.parameters['dependent']):
+            for j in range(number_train_sets):
+                self.training[j, i] = np.random.uniform(self.governing.parameters['dependent'][dependent_variable][0],
+                                                        self.governing.parameters['dependent'][dependent_variable][1])
+        return
 
-    def train_network(self, optimizer=tf.keras.optimizers.Adam(), batch_size=1, epochs=1, plot=False):
+    def train_network(self, batch_size: int, epochs: int, optimizer=Adam(), plot: np.ndarray = False):
         self.training = tf.data.Dataset.from_tensor_slices(self.training)
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
         number_of_batches = len(self.training)
-        self.initial_weights = tf.keras.backend.get_value(self.model.trainable_variables)
+        progress_bar = Progbar(target=number_of_batches)
 
-        plot = DynamicPlot()
-        x_test = np.sort(np.linspace(0, 1, 10).astype(np.float64), axis=0)
-        y_test = np.array([self.analytic_solution(x) for x in x_test], dtype=np.float64)
-        plot.plot(((x_test, y_test),
-                   (x_test, np.zeros(len(x_test)))))
-        pbar = tf.keras.utils.Progbar(target=number_of_batches)
+        if plot is not False:
+            dynamic_plot = DynamicPlot()
+            x_test = plot
+            y_test = np.array([self.governing.equation(x) for x in x_test], dtype=np.float64)
+            dynamic_plot.plot(
+                (
+                    (x_test, y_test),
+                    (x_test, np.zeros(len(x_test)))
+                ))
 
-        L = tf.constant(self.L, shape=(1, 1), dtype=tf.float64)
-        zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
         for epoch in range(epochs):
             tf.print(f"Epoch: {epoch + 1}/{epochs}")
-            step = 1
+            step = 0
             for train_batch in self.training:
+                step += 1
                 with tf.GradientTape() as tape:
-                    _, d2u_dx2 = self.train_loss(train_batch)
-                    du_dx, _ = self.train_loss(L)
-                    loss = tf.reduce_mean(tf.square(self.A * self.E * d2u_dx2 + self.c * train_batch)) + \
-                           tf.square(self.model(zero)) + \
-                           tf.square(du_dx)
+                    loss = tf.reduce_mean(tf.square(self.governing.collocation(self.model, train_batch))) + \
+                           tf.reduce_sum(
+                               [tf.square(bound) for bound in self.governing.boundary(self.model, train_batch)]
+                           )
                 gradients = tape.gradient(loss, self.model.trainable_variables)
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
-                test_prediction = np.array([self.model(x.reshape(1, 1)).numpy()[0] for x in x_test], dtype=np.float64)
-                test_loss = np.mean(np.square(test_prediction - y_test), dtype=np.float64)
-                pbar.update(step, values=[('loss', loss), ('test loss', test_loss)])
-                plot.update(y=test_prediction, plot_number=1)
-                step += 1
+                if plot is not False:
+                    test_prediction = np.array([self.model(x.reshape(1, 1)).numpy()[0] for x in x_test], dtype=np.float64)
+                    dynamic_plot.update(y=test_prediction, plot_number=1)
+                    test_loss = np.mean(np.square(test_prediction - y_test), dtype=np.float64)
+                    progress_bar.update(step, values=[('loss', loss), ('test loss', test_loss)])
+                else:
+                    progress_bar.update(step, values=[('loss', loss)])
         return
-
-    def read_boundary_conditions(self, boundary_conditions, dependents_test_domains):
-        to_evaluate = ()
-        for i in boundary_conditions:
-            if i['function_type'] == 'derivative':
-                input_layer = i['input_values']
-                value = None
-                for j in input_layer:
-                    if j not in dependents_test_domains.keys():
-                        print('BC dependents mismatch!')
-                        sys.exit(1)
-                    value = input_layer[j]
-                    if isinstance(value, (int, float, complex)):
-                        value = tf.constant(value, shape=(1, 1), dtype=tf.float64)
-                    elif isinstance(value, str):
-                        value = tf.constant(boundary_conditions[value], shape=(1, 1), dtype=tf.float64)
-                to_evaluate = to_evaluate + (Derivative(amount=i['amount'], input_layer=value), )
-            elif i['function_type'] == 'model':
-                pass
-        return to_evaluate
-
-
-class Derivative:
-    def __init__(self, amount, input_layer):
-        self.model = None
-        self.amount = amount
-        self.input_layer = input_layer
-
-    def derivative(self, _):
-        with tf.GradientTape() as tape:
-            tape.watch(self.input_layer)
-            if self.amount == 1:
-                value = self.model(self.input_layer)
-            else:
-                self.amount -= 1
-                value = self.derivative(None)
-            output = tape.gradient(value, self.input_layer)
-        return output
 
 
 class DynamicPlot:
@@ -157,22 +148,40 @@ class DynamicPlot:
 
 
 if __name__ == "__main__":
-    nn = NeuralNetwork(dependents_test_domains={'x': (0.0, 'L')},
-                       constants={'c': 1.0,
-                                  'A': 1.0,
-                                  'E': 1.0,
-                                  'L': 1.0},
-                       boundary_conditions=({'function_type': 'derivative',
-                                             'amount': 1,
-                                             'input_values': {'x': 0}
-                                             },
-                                            {'function_type': 'model',
-                                             'input_values': {'x': 'L'}
-                                             }),
-                       number_neurons_per_layer=[30, 60, 30, 1],
-                       number_train_sets=1000,
-                       activation_function='tanh')
-    nn.train_network(optimizer=tf.keras.optimizers.Adam(),
-                     batch_size=16,
-                     epochs=400)
-    print('Breakpoint here: Try different test data points')
+    rod_example_1 = GoverningEquation()
+    rod_example_1.read_constant(constant={'c': 1.0,
+                                          'A': 1.0,
+                                          'E': 1.0,
+                                          'L': 1.0})
+    rod_example_1.read_dependent_domain(dependent={'x': (0.0, 'L')})
+    nn = NeuralNetwork()
+    nn.set_governing_equation(governing_equation=rod_example_1)
+    nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
+                  activation_function='tanh')
+    nn.set_training(number_train_sets=1000)
+
+
+    def collocation(self, model, input_layer):
+        value = (self.parameters['constant']['A'] *
+                 self.parameters['constant']['E'] *
+                 derivative(amount=2, model=model, input_layer=input_layer) +
+                 self.parameters['constant']['c'] * input_layer)
+        return value
+
+
+    def boundary(self, model, input_layer):
+        zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
+        length = tf.constant(self.parameters['constant']['L'], shape=(1, 1), dtype=tf.float64)
+        fix = model(zero)
+        end = derivative(amount=1, model=model, input_layer=length)
+        return fix, end
+
+    def equation(self, x):
+        return self.parameters['constant']['c'] / 6.0 / self.parameters['constant']['A'] / self.parameters['constant']['E'] * (-(x ** 3) + (3 * (self.parameters['constant']['L'] ** 2) * x))
+
+
+    rod_example_1.collocation = types.MethodType(collocation, rod_example_1)
+    rod_example_1.boundary = types.MethodType(boundary, rod_example_1)
+    rod_example_1.equation = types.MethodType(equation, rod_example_1)
+    nn.train_network(batch_size=16, epochs=500, plot=np.linspace(0, 1, 10).astype(np.float64))
+
