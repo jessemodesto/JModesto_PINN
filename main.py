@@ -111,12 +111,13 @@ class NeuralNetwork:
                     loss = tf.reduce_mean(tf.square(self.governing.collocation(self.model, train_batch))) + \
                            tf.reduce_sum(
                                [tf.square(bound) for bound in self.governing.boundary(self.model, train_batch)]
-                           )
+                           ) if self.governing.boundary(self.model, train_batch) is not None else 0
                 gradients = tape.gradient(loss, self.model.trainable_variables)
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
                 if plot is not False:
-                    test_prediction = np.array([self.model(x.reshape(1, 1)).numpy()[0] for x in x_test], dtype=np.float64)
+                    test_prediction = np.array([self.model(x.reshape(1, 1)).numpy()[0] for x in x_test],
+                                               dtype=np.float64)
                     dynamic_plot.update(y=test_prediction, plot_number=1)
                     test_loss = np.mean(np.square(test_prediction - y_test), dtype=np.float64)
                     progress_bar.update(step, values=[('loss', loss), ('test loss', test_loss)])
@@ -148,40 +149,104 @@ class DynamicPlot:
 
 
 if __name__ == "__main__":
-    rod_example_1 = GoverningEquation()
-    rod_example_1.read_constant(constant={'c': 1.0,
-                                          'A': 1.0,
-                                          'E': 1.0,
-                                          'L': 1.0})
-    rod_example_1.read_dependent_domain(dependent={'x': (0.0, 'L')})
-    nn = NeuralNetwork()
-    nn.set_governing_equation(governing_equation=rod_example_1)
-    nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
-                  activation_function='tanh')
-    nn.set_training(number_train_sets=1000)
+    def rod_1():
+        rod_example_1 = GoverningEquation()
+        rod_example_1.read_constant(constant={'c': 1.0,
+                                              'A': 1.0,
+                                              'E': 1.0,
+                                              'L': 1.0})
+        rod_example_1.read_dependent_domain(dependent={'x': (0.0, 'L')})
+        nn = NeuralNetwork()
+        nn.set_governing_equation(governing_equation=rod_example_1)
+        nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
+                      activation_function='tanh')
+        nn.set_training(number_train_sets=1000)
+
+        def collocation(self, model, input_layer):
+            value = (self.parameters['constant']['A'] *
+                     self.parameters['constant']['E'] *
+                     derivative(amount=2, model=model, input_layer=input_layer) +
+                     self.parameters['constant']['c'] * input_layer)
+            return value
+
+        def boundary(self, model, input_layer):
+            zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
+            length = tf.constant(self.parameters['constant']['L'], shape=(1, 1), dtype=tf.float64)
+            fix = model(zero)
+            end = derivative(amount=1, model=model, input_layer=length)
+            return fix, end
+
+        def equation(self, x):
+            return self.parameters['constant']['c'] / 6.0 / self.parameters['constant']['A'] / \
+                self.parameters['constant']['E'] * (-(x ** 3) + (3 * (self.parameters['constant']['L'] ** 2) * x))
+
+        rod_example_1.collocation = types.MethodType(collocation, rod_example_1)
+        rod_example_1.boundary = types.MethodType(boundary, rod_example_1)
+        rod_example_1.equation = types.MethodType(equation, rod_example_1)
+        nn.train_network(batch_size=16, epochs=500, plot=np.linspace(0, 1, 10).astype(np.float64))
 
 
-    def collocation(self, model, input_layer):
-        value = (self.parameters['constant']['A'] *
-                 self.parameters['constant']['E'] *
-                 derivative(amount=2, model=model, input_layer=input_layer) +
-                 self.parameters['constant']['c'] * input_layer)
-        return value
+    def rod_2():
+        rod_example_2 = GoverningEquation()
+        rod_example_2.read_constant(constant={'c': 1.0,
+                                              'A': 1.0,
+                                              'E': 1.0,
+                                              'L': 1.0})
+        rod_example_2.read_dependent_domain(dependent={'x': (0.0, 'L')})
+        nn = NeuralNetwork()
+        nn.set_governing_equation(governing_equation=rod_example_2)
+        nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
+                      activation_function='tanh')
+        nn.set_training(number_train_sets=1000)
 
+        def collocation(self, model, input_layer):
+            value = (self.parameters['constant']['A'] *
+                     self.parameters['constant']['E'] *
+                     derivative(amount=2, model=model, input_layer=input_layer) +
+                     self.parameters['constant']['c'] * input_layer)
+            return value
 
-    def boundary(self, model, input_layer):
-        zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
-        length = tf.constant(self.parameters['constant']['L'], shape=(1, 1), dtype=tf.float64)
-        fix = model(zero)
-        end = derivative(amount=1, model=model, input_layer=length)
-        return fix, end
+        def boundary(self, model, input_layer):
+            zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
+            length = tf.constant(self.parameters['constant']['L'], shape=(1, 1), dtype=tf.float64)
+            fix = model(zero)
+            end = derivative(amount=1, model=model, input_layer=length) - self.parameters['constant']['c'] / 2 / \
+                  self.parameters['constant']['A'] / self.parameters['constant']['E'] * (
+                              self.parameters['constant']['L'] ** 2)
+            return fix, end
 
-    def equation(self, x):
-        return self.parameters['constant']['c'] / 6.0 / self.parameters['constant']['A'] / self.parameters['constant']['E'] * (-(x ** 3) + (3 * (self.parameters['constant']['L'] ** 2) * x))
+        def equation(self, x):
+            return self.parameters['constant']['c'] / self.parameters['constant']['A'] / self.parameters['constant'][
+                'E'] * (-(x ** 3) / 6 + (self.parameters['constant']['L'] ** 2) * x)
 
+        rod_example_2.collocation = types.MethodType(collocation, rod_example_2)
+        rod_example_2.boundary = types.MethodType(boundary, rod_example_2)
+        rod_example_2.equation = types.MethodType(equation, rod_example_2)
+        nn.train_network(batch_size=16, epochs=500, plot=np.linspace(0, 1, 10).astype(np.float64))
 
-    rod_example_1.collocation = types.MethodType(collocation, rod_example_1)
-    rod_example_1.boundary = types.MethodType(boundary, rod_example_1)
-    rod_example_1.equation = types.MethodType(equation, rod_example_1)
-    nn.train_network(batch_size=16, epochs=500, plot=np.linspace(0, 1, 10).astype(np.float64))
-
+    # TODO: add 2d for plotting and specific derivatives to dependent variables
+    # def heat_1d():
+    #     heat_1d_example = GoverningEquation()
+    #     heat_1d_example.read_constant(constant={'alpha': 1.0})
+    #     heat_1d_example.read_dependent_domain(dependent={'x': (0.0, 1.0),
+    #                                                      't': (0.0, 1.0)})
+    #     nn = NeuralNetwork()
+    #     nn.set_governing_equation(governing_equation=heat_1d_example)
+    #     nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
+    #                   activation_function='tanh')
+    #     nn.set_training(number_train_sets=1000)
+    #
+    #     def collocation(self, model, input_layer):
+    #         value = derivative(amount=1, model=model, input_layer=input_layer)[1] - self.parameters['constant']['alpha'] * derivative(amount=2, model=model, input_layer=input_layer)[0]
+    #         return value
+    #
+    #     def boundary(self, model, input_layer):
+    #         return None
+    #
+    #     def equation(self, x):
+    #         return np.sin(np.pi * x_test) * np.exp(-np.pi**2 * t_test)
+    #
+    #     heat_1d_example.collocation = types.MethodType(collocation, heat_1d_example)
+    #     heat_1d_example.boundary = types.MethodType(boundary, heat_1d_example)
+    #     heat_1d_example.equation = types.MethodType(equation, heat_1d_example)
+    #     nn.train_network(batch_size=16, epochs=500, plot=np.linspace(0, 1, 10).astype(np.float64))
