@@ -13,20 +13,6 @@ from tensorflow.keras.utils import Progbar
 matplotlib.use("QtAgg")  # Comment out if PyQt is not installed
 
 
-def derivative(amount: int, model, input_layer):
-    with tf.GradientTape() as tape:
-        tape.watch(input_layer)
-        if amount == 1:
-            value = model(input_layer)
-        else:
-            amount -= 1
-            value = derivative(amount=amount,
-                               model=model,
-                               input_layer=input_layer)
-        output = tape.gradient(value, input_layer)
-    return output
-
-
 class GoverningEquation:
     def __init__(self):
         self.parameters = {'constant': {},
@@ -47,6 +33,20 @@ class GoverningEquation:
                 if isinstance(upper_bound, str) else np.float64(upper_bound)
             self.parameters['dependent'][dependent_variable] = (lower_bound, upper_bound)
         return
+
+    # TODO: utilize dependent_variable to create partial derivatives
+    def derivative(self, amount: int, model, input_layer):
+        with tf.GradientTape() as tape:
+            tape.watch(input_layer)
+            if amount == 1:
+                value = model(input_layer)
+            else:
+                amount -= 1
+                value = self.derivative(amount=amount,
+                                        model=model,
+                                        input_layer=input_layer)
+            output = tape.gradient(value, input_layer)
+        return output
 
 
 class NeuralNetwork:
@@ -95,9 +95,6 @@ class NeuralNetwork:
         boundary = False
         if 'boundary' in self.governing.__dict__:
             boundary = True
-        collocation = False
-        if 'collocation' in self.governing.__dict__:
-            collocation = True
 
         if plot is not False and x_axis_plot is not False:
             dynamic_plot = DynamicPlot()
@@ -115,14 +112,10 @@ class NeuralNetwork:
             step = 0
             for train_batch in self.training:
                 step += 1
-                # TODO: implement hybrid approach
+                # TODO: implement hybrid approach and case for when no collocation
                 with tf.GradientTape() as tape:
-                    loss = None
-                    if loss is None and collocation:
-                        loss = tf.reduce_mean(tf.square(self.governing.collocation(self.model, train_batch)))
-                    if loss is None and boundary:
-                        loss = tf.reduce_sum([tf.square(bound) for bound in self.governing.boundary(self.model, train_batch)])
-                    elif boundary:
+                    loss = tf.reduce_mean(tf.square(self.governing.collocation(self.model, train_batch)))
+                    if boundary:
                         loss = loss + tf.reduce_sum([tf.square(bound) for bound in self.governing.boundary(self.model, train_batch)])
                 gradients = tape.gradient(loss, self.model.trainable_variables)
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
@@ -176,7 +169,7 @@ if __name__ == "__main__":
         def collocation(self, model, input_layer):
             value = (self.parameters['constant']['A'] *
                      self.parameters['constant']['E'] *
-                     derivative(amount=2, model=model, input_layer=input_layer) +
+                     self.derivative(amount=2, model=model, input_layer=input_layer) +
                      self.parameters['constant']['c'] * input_layer)
             return value
 
@@ -184,7 +177,7 @@ if __name__ == "__main__":
             zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
             length = tf.constant(self.parameters['constant']['L'], shape=(1, 1), dtype=tf.float64)
             fix = model(zero)
-            end = derivative(amount=1, model=model, input_layer=length)
+            end = self.derivative(amount=1, model=model, input_layer=length)
             return fix, end
 
         def equation(self, input_dictionary):
@@ -215,7 +208,7 @@ if __name__ == "__main__":
         def collocation(self, model, input_layer):
             value = (self.parameters['constant']['A'] *
                      self.parameters['constant']['E'] *
-                     derivative(amount=2, model=model, input_layer=input_layer) +
+                     self.derivative(amount=2, model=model, input_layer=input_layer) +
                      self.parameters['constant']['c'] * input_layer)
             return value
 
@@ -223,7 +216,7 @@ if __name__ == "__main__":
             zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
             length = tf.constant(self.parameters['constant']['L'], shape=(1, 1), dtype=tf.float64)
             fix = model(zero)
-            end = derivative(amount=1, model=model, input_layer=length) - self.parameters['constant']['c'] / 2 / self.parameters['constant']['A'] / self.parameters['constant']['E'] * self.parameters['constant']['L'] ** 2
+            end = self.derivative(amount=1, model=model, input_layer=length) - self.parameters['constant']['c'] / 2 / self.parameters['constant']['A'] / self.parameters['constant']['E'] * self.parameters['constant']['L'] ** 2
             return fix, end
 
         def equation(self, input_dictionary):
@@ -237,6 +230,8 @@ if __name__ == "__main__":
                          plot={'x': np.linspace(0, 1, 10).astype(np.float64)},
                          x_axis_plot='x')
 
+    # TODO:implement partial derivatives possibly using Jacobian
+    # Currently does not work
     def heat_1d():
         heat_1d_example = GoverningEquation()
         heat_1d_example.read_constant(constant={'alpha': 0.001})
@@ -249,7 +244,7 @@ if __name__ == "__main__":
         nn.set_training(number_train_sets=1000)
 
         def collocation(self, model, input_layer):
-            value = derivative(amount=1, model=model, input_layer=input_layer)[1] - self.parameters['constant']['alpha'] * derivative(amount=2, model=model, input_layer=input_layer)[0]
+            value = self.derivative(amount=1, model=model, input_layer=input_layer) - self.parameters['constant']['alpha'] * self.derivative(amount=2, model=model, input_layer=input_layer)
             return value
 
         def equation(self, input_dictionary):
@@ -262,4 +257,4 @@ if __name__ == "__main__":
                          plot={'x': np.linspace(0, 1, 10).astype(np.float64),
                                't': np.linspace(0.9, 0.9, 10).astype(np.float64)},
                          x_axis_plot='x')
-    heat_1d()
+    rod_2()
