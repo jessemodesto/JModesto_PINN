@@ -34,31 +34,46 @@ class GoverningEquation:
             self.parameters['dependent'][dependent_variable] = (lower_bound, upper_bound)
         return
 
-    # TODO: utilize dependent_variable to create partial derivatives
-    def derivative(self, amount: int, model, input_layer):
+    def derivative(self, differential: dict, model, input_layer, init=True):
+        if init:
+            index = {}
+            index_list = []
+            for i, dependent_variable in enumerate(self.parameters['dependent']):
+                index[dependent_variable] = i
+            for var, count in differential.items():
+                for _ in range(count):
+                    index_list.append(slice(None))
+                    index_list.append(index[var])
+            index_list = tuple(index_list)
+        max_key = max(differential, key=differential.get)
         with tf.GradientTape() as tape:
             tape.watch(input_layer)
-            if amount == 1:
+            if differential[max_key] == 1:
                 value = model(input_layer)
+                output = tape.gradient(value, input_layer)
             else:
-                amount -= 1
-                value = self.derivative(amount=amount,
+                differential_copy = differential.copy()
+                differential_copy[max_key] -= 1
+                value = self.derivative(differential=differential_copy,
                                         model=model,
-                                        input_layer=input_layer)
-            output = tape.gradient(value, input_layer)
-        return output
+                                        input_layer=input_layer,
+                                        init=False)
+                output = tape.jacobian(value, input_layer)
+        if init:
+            if differential[max_key] > 1:
+                return tf.linalg.diag_part(output[index_list])
+            else:
+                return output[index_list]
+        else:
+            return output
 
 
 class NeuralNetwork:
-    def __init__(self):
-        self.governing = None
+    def __init__(self, governing):
+        self.governing = governing
         self.model = None
         self.training = None
         self.output = None
-
-    def set_governing_equation(self, governing_equation):
-        self.governing = governing_equation
-        return
 
     def set_layers(self, number_neurons_per_layer, activation_function):
         self.model = Sequential()
@@ -86,7 +101,7 @@ class NeuralNetwork:
                                                         self.governing.parameters['dependent'][dependent_variable][1])
         return
 
-    def train_network(self, batch_size: int, epochs: int, optimizer=Adam(), plot: dict = False, x_axis_plot: str = False):
+    def train_network(self, batch_size: int, epochs: int, optimizer=Adam(), plot: dict = False, x_axis: str = False):
         self.training = tf.data.Dataset.from_tensor_slices(self.training)
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
         number_of_batches = len(self.training)
@@ -96,15 +111,15 @@ class NeuralNetwork:
         if 'boundary' in self.governing.__dict__:
             boundary = True
 
-        if plot is not False and x_axis_plot is not False:
+        if plot is not False and x_axis is not False:
             dynamic_plot = DynamicPlot()
             values = np.array([v for v in zip(*plot.values())], dtype=np.float64)
             values_dict = [dict(zip(plot, v)) for v in zip(*plot.values())]
             output = np.array([self.governing.equation(val) for val in values_dict], dtype=np.float64)
             dynamic_plot.plot(
                 (
-                    (plot[x_axis_plot], output),
-                    (plot[x_axis_plot], np.zeros(len(output)))
+                    (plot[x_axis], output),
+                    (plot[x_axis], np.zeros(len(output)))
                 ))
 
         for epoch in range(epochs):
@@ -120,7 +135,7 @@ class NeuralNetwork:
                 gradients = tape.gradient(loss, self.model.trainable_variables)
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
-                if plot is not False and x_axis_plot is not False:
+                if plot is not False and x_axis is not False:
                     test_prediction = np.array(self.model(values), dtype=np.float64).reshape(-1)
                     dynamic_plot.update(y=test_prediction, plot_number=1)
                     test_loss = np.mean(np.square(test_prediction - output), dtype=np.float64)
@@ -160,8 +175,7 @@ if __name__ == "__main__":
                                               'E': 1.0,
                                               'L': 1.0})
         rod_example_1.read_dependent_domain(dependent={'x': (0.0, 'L')})
-        nn = NeuralNetwork()
-        nn.set_governing_equation(governing_equation=rod_example_1)
+        nn = NeuralNetwork(governing=rod_example_1)
         nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
                       activation_function='tanh')
         nn.set_training(number_train_sets=1000)
@@ -186,10 +200,7 @@ if __name__ == "__main__":
         rod_example_1.collocation = types.MethodType(collocation, rod_example_1)
         rod_example_1.boundary = types.MethodType(boundary, rod_example_1)
         rod_example_1.equation = types.MethodType(equation, rod_example_1)
-        nn.train_network(batch_size=16,
-                         epochs=500,
-                         plot={'x': np.linspace(0, 1, 10).astype(np.float64)},
-                         x_axis_plot='x')
+        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
 
 
     def rod_2():
@@ -199,8 +210,7 @@ if __name__ == "__main__":
                                               'E': 1.0,
                                               'L': 1.0})
         rod_example_2.read_dependent_domain(dependent={'x': (0.0, 'L')})
-        nn = NeuralNetwork()
-        nn.set_governing_equation(governing_equation=rod_example_2)
+        nn = NeuralNetwork(governing=rod_example_2)
         nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
                       activation_function='tanh')
         nn.set_training(number_train_sets=1000)
@@ -225,26 +235,21 @@ if __name__ == "__main__":
         rod_example_2.collocation = types.MethodType(collocation, rod_example_2)
         rod_example_2.boundary = types.MethodType(boundary, rod_example_2)
         rod_example_2.equation = types.MethodType(equation, rod_example_2)
-        nn.train_network(batch_size=16,
-                         epochs=500,
-                         plot={'x': np.linspace(0, 1, 10).astype(np.float64)},
-                         x_axis_plot='x')
+        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
 
-    # TODO:implement partial derivatives possibly using Jacobian
-    # Currently does not work
+
     def heat_1d():
         heat_1d_example = GoverningEquation()
         heat_1d_example.read_constant(constant={'alpha': 0.001})
         heat_1d_example.read_dependent_domain(dependent={'x': (0.0, 1.0),
                                                          't': (0.0, 1.0)})
-        nn = NeuralNetwork()
-        nn.set_governing_equation(governing_equation=heat_1d_example)
-        nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
+        nn = NeuralNetwork(governing=heat_1d_example)
+        nn.set_layers(number_neurons_per_layer=[50, 50, 1],
                       activation_function='tanh')
         nn.set_training(number_train_sets=1000)
 
         def collocation(self, model, input_layer):
-            value = self.derivative(amount=1, model=model, input_layer=input_layer) - self.parameters['constant']['alpha'] * self.derivative(amount=2, model=model, input_layer=input_layer)
+            value = self.derivative(differential={'t': 1}, model=model, input_layer=input_layer) - self.parameters['constant']['alpha'] * self.derivative(differential={'x': 2}, model=model, input_layer=input_layer)
             return value
 
         def equation(self, input_dictionary):
@@ -252,9 +257,8 @@ if __name__ == "__main__":
 
         heat_1d_example.collocation = types.MethodType(collocation, heat_1d_example)
         heat_1d_example.equation = types.MethodType(equation, heat_1d_example)
-        nn.train_network(batch_size=16,
-                         epochs=500,
-                         plot={'x': np.linspace(0, 1, 10).astype(np.float64),
-                               't': np.linspace(0.9, 0.9, 10).astype(np.float64)},
-                         x_axis_plot='x')
-    rod_2()
+        nn.train_network(batch_size=1, epochs=1000, plot={'x': np.linspace(0, 1, 10).astype(np.float64),
+                                                          't': np.linspace(0.9, 0.9, 10).astype(np.float64)},
+                         x_axis='x')
+
+    
