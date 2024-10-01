@@ -17,14 +17,18 @@ class GoverningEquation:
     def __init__(self):
         self.parameters = {'constant': {},
                            'dependent': {}}
+        self.index = {}
 
     def read_constant(self, constant):
         for constant_variable in constant:
-            self.parameters['constant'][constant_variable] = np.float64(constant[constant_variable])
+            if isinstance(constant[constant_variable], float) or isinstance(constant[constant_variable], int):
+                self.parameters['constant'][constant_variable] = np.float64(constant[constant_variable])
+            else:
+                self.parameters['constant'][constant_variable] = constant[constant_variable]
         return
 
     def read_dependent_domain(self, dependent):
-        for dependent_variable in dependent:
+        for i, dependent_variable in enumerate(dependent):
             lower_bound = dependent[dependent_variable][0]
             lower_bound = self.parameters['constant'][lower_bound] \
                 if isinstance(lower_bound, str) else np.float64(lower_bound)
@@ -32,40 +36,22 @@ class GoverningEquation:
             upper_bound = self.parameters['constant'][upper_bound] \
                 if isinstance(upper_bound, str) else np.float64(upper_bound)
             self.parameters['dependent'][dependent_variable] = (lower_bound, upper_bound)
+            self.index[dependent_variable] = i
         return
 
     def derivative(self, differential: dict, model, input_layer, init=True):
-        if init:
-            index = {}
-            index_list = []
-            for i, dependent_variable in enumerate(self.parameters['dependent']):
-                index[dependent_variable] = i
-            for var, count in differential.items():
-                for _ in range(count):
-                    index_list.append(slice(None))
-                    index_list.append(index[var])
-            index_list = tuple(index_list)
-        max_key = max(differential, key=differential.get)
-        with tf.GradientTape() as tape:
+        max_order = sum(differential.values())
+        gradients = input_layer
+        with tf.GradientTape(persistent=True) as tape:
             tape.watch(input_layer)
-            if differential[max_key] == 1:
-                value = model(input_layer)
-                output = tape.gradient(value, input_layer)
-            else:
-                differential_copy = differential.copy()
-                differential_copy[max_key] -= 1
-                value = self.derivative(differential=differential_copy,
-                                        model=model,
-                                        input_layer=input_layer,
-                                        init=False)
-                output = tape.jacobian(value, input_layer)
+            value = model(input_layer)
+            for i in range(max_order):
+                gradients = tape.gradient(value, input_layer)
+                value = gradients
         if init:
-            if differential[max_key] > 1:
-                return tf.linalg.diag_part(output[index_list])
-            else:
-                return output[index_list]
+            return value
         else:
-            return output
+            return value
 
 
 class NeuralNetwork:
@@ -173,7 +159,9 @@ if __name__ == "__main__":
         rod_example_1.read_constant(constant={'c': 1.0,
                                               'A': 1.0,
                                               'E': 1.0,
-                                              'L': 1.0})
+                                              'L': 1.0,
+                                              'zero': tf.constant(0., shape=(1, 1), dtype=tf.float64),
+                                              'length': tf.constant(1.0, shape=(1, 1), dtype=tf.float64)})
         rod_example_1.read_dependent_domain(dependent={'x': (0.0, 'L')})
         nn = NeuralNetwork(governing=rod_example_1)
         nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
@@ -183,15 +171,17 @@ if __name__ == "__main__":
         def collocation(self, model, input_layer):
             value = (self.parameters['constant']['A'] *
                      self.parameters['constant']['E'] *
-                     self.derivative(amount=2, model=model, input_layer=input_layer) +
+                     self.derivative(differential={'x': 2},
+                                     model=model,
+                                     input_layer=input_layer) +
                      self.parameters['constant']['c'] * input_layer)
             return value
 
         def boundary(self, model, input_layer):
-            zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
-            length = tf.constant(self.parameters['constant']['L'], shape=(1, 1), dtype=tf.float64)
-            fix = model(zero)
-            end = self.derivative(amount=1, model=model, input_layer=length)
+            fix = model(self.parameters['constant']['zero'])
+            end = self.derivative(differential={'x': 1},
+                                  model=model,
+                                  input_layer=self.parameters['constant']['length'])
             return fix, end
 
         def equation(self, input_dictionary):
@@ -208,7 +198,9 @@ if __name__ == "__main__":
         rod_example_2.read_constant(constant={'c': 1.0,
                                               'A': 1.0,
                                               'E': 1.0,
-                                              'L': 1.0})
+                                              'L': 1.0,
+                                              'zero': tf.constant(0., shape=(1, 1), dtype=tf.float64),
+                                              'length': tf.constant(1.0, shape=(1, 1), dtype=tf.float64)})
         rod_example_2.read_dependent_domain(dependent={'x': (0.0, 'L')})
         nn = NeuralNetwork(governing=rod_example_2)
         nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
@@ -218,15 +210,18 @@ if __name__ == "__main__":
         def collocation(self, model, input_layer):
             value = (self.parameters['constant']['A'] *
                      self.parameters['constant']['E'] *
-                     self.derivative(amount=2, model=model, input_layer=input_layer) +
+                     self.derivative(differential={'x': 2},
+                                     model=model,
+                                     input_layer=input_layer) +
                      self.parameters['constant']['c'] * input_layer)
             return value
 
         def boundary(self, model, input_layer):
-            zero = tf.constant(0., shape=(1, 1), dtype=tf.float64)
-            length = tf.constant(self.parameters['constant']['L'], shape=(1, 1), dtype=tf.float64)
-            fix = model(zero)
-            end = self.derivative(amount=1, model=model, input_layer=length) - self.parameters['constant']['c'] / 2 / self.parameters['constant']['A'] / self.parameters['constant']['E'] * self.parameters['constant']['L'] ** 2
+            fix = model(self.parameters['constant']['zero'])
+            end = (self.derivative(differential={'x': 1},
+                                   model=model,
+                                   input_layer=self.parameters['constant']['length']) -
+                   self.parameters['constant']['c'] / 2 / self.parameters['constant']['A'] / self.parameters['constant']['E'] * self.parameters['constant']['L'] ** 2)
             return fix, end
 
         def equation(self, input_dictionary):
@@ -237,28 +232,152 @@ if __name__ == "__main__":
         rod_example_2.equation = types.MethodType(equation, rod_example_2)
         nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
 
-
-    def heat_1d():
-        heat_1d_example = GoverningEquation()
-        heat_1d_example.read_constant(constant={'alpha': 0.001})
-        heat_1d_example.read_dependent_domain(dependent={'x': (0.0, 1.0),
-                                                         't': (0.0, 1.0)})
-        nn = NeuralNetwork(governing=heat_1d_example)
-        nn.set_layers(number_neurons_per_layer=[50, 50, 1],
+    def beam_1():
+        beam_example_1 = GoverningEquation()
+        beam_example_1.read_constant(constant={'E': 1.0,
+                                               'I': 1.0,
+                                               'L': 1.0,
+                                               'w': 1.0,
+                                               'zero': tf.constant(0., shape=(1, 1), dtype=tf.float64),
+                                               'length': tf.constant(1.0, shape=(1, 1), dtype=tf.float64)})
+        beam_example_1.read_dependent_domain(dependent={'x': (0.0, 'L')})
+        nn = NeuralNetwork(governing=beam_example_1)
+        nn.set_layers(number_neurons_per_layer=[40, 40, 1],
                       activation_function='tanh')
         nn.set_training(number_train_sets=1000)
 
         def collocation(self, model, input_layer):
-            value = self.derivative(differential={'t': 1}, model=model, input_layer=input_layer) - self.parameters['constant']['alpha'] * self.derivative(differential={'x': 2}, model=model, input_layer=input_layer)
+            value = (self.parameters['constant']['w'] / self.parameters['constant']['E'] / self.parameters['constant']['I'] +
+                     self.derivative(differential={'x': 4},
+                                     model=model,
+                                     input_layer=input_layer))
             return value
 
-        def equation(self, input_dictionary):
-            return np.sin(np.pi * input_dictionary['x']) * np.exp(-self.parameters['constant']['alpha'] * input_dictionary['t'])
+        def boundary(self, model, input_layer):
+            y_0 = model(self.parameters['constant']['zero'])
+            y_L = model(self.parameters['constant']['length'])
+            d2y_dx2_0 = self.derivative(differential={'x': 2},
+                                        model=model,
+                                        input_layer=self.parameters['constant']['zero'])
+            d2y_dx2_L = self.derivative(differential={'x': 2},
+                                        model=model,
+                                        input_layer=self.parameters['constant']['length'])
+            return y_0, y_L, d2y_dx2_0, d2y_dx2_L
 
-        heat_1d_example.collocation = types.MethodType(collocation, heat_1d_example)
-        heat_1d_example.equation = types.MethodType(equation, heat_1d_example)
-        nn.train_network(batch_size=1, epochs=1000, plot={'x': np.linspace(0, 1, 10).astype(np.float64),
-                                                          't': np.linspace(0.9, 0.9, 10).astype(np.float64)},
-                         x_axis='x')
+        def equation(self, input_dictionary):
+            return self.parameters['constant']['w'] / self.parameters['constant']['E'] / self.parameters['constant']['I'] / 24.0 * (-input_dictionary['x'] ** 4 + 2.0 * self.parameters['constant']['L'] * input_dictionary['x'] ** 3 - self.parameters['constant']['L'] ** 3 * input_dictionary['x'])
+
+        beam_example_1.collocation = types.MethodType(collocation, beam_example_1)
+        beam_example_1.boundary = types.MethodType(boundary, beam_example_1)
+        beam_example_1.equation = types.MethodType(equation, beam_example_1)
+        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
+
+    def beam_2():
+        beam_example_2 = GoverningEquation()
+        beam_example_2.read_constant(constant={'E': 1.0,
+                                               'I': 1.0,
+                                               'L': 1.0,
+                                               'w': 1.0,
+                                               'zero': tf.constant(0., shape=(1, 1), dtype=tf.float64),
+                                               'length': tf.constant(1.0, shape=(1, 1), dtype=tf.float64)})
+        beam_example_2.read_dependent_domain(dependent={'x': (0.0, 'L')})
+        nn = NeuralNetwork(governing=beam_example_2)
+        nn.set_layers(number_neurons_per_layer=[40, 40, 1],
+                      activation_function='tanh')
+        nn.set_training(number_train_sets=1000)
+
+        def collocation(self, model, input_layer):
+            value = (self.parameters['constant']['w'] / self.parameters['constant']['E'] / self.parameters['constant']['I'] +
+                     self.derivative(differential={'x': 4},
+                                     model=model,
+                                     input_layer=input_layer))
+            return value
+
+        def boundary(self, model, input_layer):
+            y_0 = model(self.parameters['constant']['zero'])
+            dy_dx_0 = self.derivative(differential={'x': 1},
+                                      model=model,
+                                      input_layer=self.parameters['constant']['zero'])
+            d2y_dx2_L = self.derivative(differential={'x': 2},
+                                        model=model,
+                                        input_layer=self.parameters['constant']['length'])
+            d3y_dx3_L = self.derivative(differential={'x': 3},
+                                        model=model,
+                                        input_layer=self.parameters['constant']['length'])
+            return y_0, dy_dx_0, d2y_dx2_L, d3y_dx3_L
+
+        def equation(self, input_dictionary):
+            return self.parameters['constant']['w'] / self.parameters['constant']['E'] / self.parameters['constant']['I'] / 24.0 * (-input_dictionary['x'] ** 4 + 4.0 * self.parameters['constant']['L'] * input_dictionary['x'] ** 3 - 6.0 * self.parameters['constant']['L'] ** 2 * input_dictionary['x'] ** 2)
+
+        beam_example_2.collocation = types.MethodType(collocation, beam_example_2)
+        beam_example_2.boundary = types.MethodType(boundary, beam_example_2)
+        beam_example_2.equation = types.MethodType(equation, beam_example_2)
+        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
+
+    def beam_3():
+        beam_example_3 = GoverningEquation()
+        beam_example_3.read_constant(constant={'E': 1.0,
+                                               'I': 1.0,
+                                               'L': 1.0,
+                                               'w': 1.0,
+                                               'zero': tf.constant(0., shape=(1, 1), dtype=tf.float64),
+                                               'length': tf.constant(1.0, shape=(1, 1), dtype=tf.float64)})
+        beam_example_3.read_dependent_domain(dependent={'x': (0.0, 'L')})
+        nn = NeuralNetwork(governing=beam_example_3)
+        nn.set_layers(number_neurons_per_layer=[40, 40, 1],
+                      activation_function='tanh')
+        nn.set_training(number_train_sets=1000)
+
+        def collocation(self, model, input_layer):
+            value = (self.parameters['constant']['w'] / self.parameters['constant']['E'] / self.parameters['constant']['I'] +
+                     self.derivative(differential={'x': 4},
+                                     model=model,
+                                     input_layer=input_layer))
+            return value
+
+        def boundary(self, model, input_layer):
+            y_0 = model(self.parameters['constant']['zero'])
+            y_L = model(self.parameters['constant']['length'])
+            dy_dx_0 = self.derivative(differential={'x': 1},
+                                      model=model,
+                                      input_layer=self.parameters['constant']['zero'])
+            d2y_dx2_L = self.derivative(differential={'x': 2},
+                                        model=model,
+                                        input_layer=self.parameters['constant']['length'])
+            return y_0, y_L, dy_dx_0, d2y_dx2_L
+
+        def equation(self, input_dictionary):
+            return self.parameters['constant']['w'] / self.parameters['constant']['E'] / self.parameters['constant']['I'] / 24.0 * (-input_dictionary['x'] ** 4 + 5.0 / 2.0 * self.parameters['constant']['L'] * input_dictionary['x'] ** 3 - 3.0 / 2.0 * input_dictionary['x'] ** 2)
+
+        beam_example_3.collocation = types.MethodType(collocation, beam_example_3)
+        beam_example_3.boundary = types.MethodType(boundary, beam_example_3)
+        beam_example_3.equation = types.MethodType(equation, beam_example_3)
+        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
+
+
+    beam_3()
+
+    # def heat_1d():
+    #     heat_1d_example = GoverningEquation()
+    #     heat_1d_example.read_constant(constant={'alpha': 0.1})
+    #     heat_1d_example.read_dependent_domain(dependent={'x': (0.0, 1.0),
+    #                                                      't': (0.0, 1.0)})
+    #     nn = NeuralNetwork(governing=heat_1d_example)
+    #     nn.set_layers(number_neurons_per_layer=[50, 50, 1],
+    #                   activation_function='tanh')
+    #     nn.set_training(number_train_sets=1000)
+    #
+    #     def collocation(self, model, input_layer):
+    #         value = self.derivative(differential={'t': 1}, model=model, input_layer=input_layer)[:, 1] - self.parameters['constant']['alpha'] * self.derivative(differential={'x': 2}, model=model, input_layer=input_layer)[:, 0]
+    #         return value
+    #
+    #     def equation(self, input_dictionary):
+    #         return np.sin(np.pi * input_dictionary['x']) * np.exp(-self.parameters['constant']['alpha'] * input_dictionary['t'])
+    #
+    #     heat_1d_example.collocation = types.MethodType(collocation, heat_1d_example)
+    #     heat_1d_example.equation = types.MethodType(equation, heat_1d_example)
+    #     nn.train_network(batch_size=16, epochs=1000, plot={'x': np.linspace(0, 1, 10).astype(np.float64),
+    #                                                        't': np.linspace(0.9, 0.9, 10).astype(np.float64)},
+    #                      x_axis='x')
 
     
