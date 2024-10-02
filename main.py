@@ -39,19 +39,24 @@ class GoverningEquation:
             self.index[dependent_variable] = i
         return
 
-    def derivative(self, differential: dict, model, input_layer, init=True):
+    # TODO: implement partial derivatives with respect to multiple variables ex: d/(dxdy)
+    def derivative(self, differential: dict, model, input_layer):
         max_order = sum(differential.values())
-        gradients = input_layer
-        with tf.GradientTape(persistent=True) as tape:
-            tape.watch(input_layer)
-            value = model(input_layer)
-            for i in range(max_order):
-                gradients = tape.gradient(value, input_layer)
-                value = gradients
-        if init:
+        if max_order == 1:
+            with tf.GradientTape(persistent=False) as tape:
+                tape.watch(input_layer)
+                value = model(input_layer)
+            value = tape.gradient(value, input_layer)
+        else:
+            with tf.GradientTape(persistent=True) as tape:
+                tape.watch(input_layer)
+                value = model(input_layer)
+                for i in range(max_order):
+                    value = tape.gradient(value, input_layer)
+        if len(self.index) == 1:
             return value
         else:
-            return value
+            return value[(slice(None), self.index[next(iter(differential))])]
 
 
 class NeuralNetwork:
@@ -191,7 +196,6 @@ if __name__ == "__main__":
         rod_example_1.boundary = types.MethodType(boundary, rod_example_1)
         rod_example_1.equation = types.MethodType(equation, rod_example_1)
         nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
-
 
     def rod_2():
         rod_example_2 = GoverningEquation()
@@ -354,30 +358,86 @@ if __name__ == "__main__":
         beam_example_3.equation = types.MethodType(equation, beam_example_3)
         nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
 
+    def heat_1d_stationary():
+        heat_1d_example_1 = GoverningEquation()
+        heat_1d_example_1.read_constant(constant={'alpha': 20,
+                                                  'Qt': 10,
+                                                  'c_1': 70.344995319758030,
+                                                  'c_2': 2.796550046802420 * 10 ** 2,
+                                                  'zero': tf.constant(0., shape=(1, 1), dtype=tf.float64),
+                                                  'length': tf.constant(1.5, shape=(1, 1), dtype=tf.float64)})
 
-    beam_3()
+        heat_1d_example_1.read_dependent_domain(dependent={'x': (0.0, 1.5)})
+        nn = NeuralNetwork(governing=heat_1d_example_1)
+        nn.set_layers(number_neurons_per_layer=[50, 50, 1],
+                      activation_function='tanh')
+        nn.set_training(number_train_sets=1000)
 
-    # def heat_1d():
-    #     heat_1d_example = GoverningEquation()
-    #     heat_1d_example.read_constant(constant={'alpha': 0.1})
-    #     heat_1d_example.read_dependent_domain(dependent={'x': (0.0, 1.0),
-    #                                                      't': (0.0, 1.0)})
-    #     nn = NeuralNetwork(governing=heat_1d_example)
-    #     nn.set_layers(number_neurons_per_layer=[50, 50, 1],
-    #                   activation_function='tanh')
-    #     nn.set_training(number_train_sets=1000)
-    #
-    #     def collocation(self, model, input_layer):
-    #         value = self.derivative(differential={'t': 1}, model=model, input_layer=input_layer)[:, 1] - self.parameters['constant']['alpha'] * self.derivative(differential={'x': 2}, model=model, input_layer=input_layer)[:, 0]
-    #         return value
-    #
-    #     def equation(self, input_dictionary):
-    #         return np.sin(np.pi * input_dictionary['x']) * np.exp(-self.parameters['constant']['alpha'] * input_dictionary['t'])
-    #
-    #     heat_1d_example.collocation = types.MethodType(collocation, heat_1d_example)
-    #     heat_1d_example.equation = types.MethodType(equation, heat_1d_example)
-    #     nn.train_network(batch_size=16, epochs=1000, plot={'x': np.linspace(0, 1, 10).astype(np.float64),
-    #                                                        't': np.linspace(0.9, 0.9, 10).astype(np.float64)},
-    #                      x_axis='x')
+        def collocation(self, model, input_layer):
+            value = (self.parameters['constant']['alpha'] * self.derivative(differential={'x': 2}, model=model, input_layer=input_layer) +
+                     self.parameters['constant']['Qt'] * model(input_layer))
+            return value
 
-    
+        def boundary(self, model, input_layer):
+            T_0 = model(self.parameters['constant']['zero']) - 350
+            T_L = model(self.parameters['constant']['length']) - 300
+            return T_0, T_L
+
+        def equation(self, input_dictionary):
+            return (self.parameters['constant']['c_1'] * np.exp(np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_dictionary['x']) +
+                    self.parameters['constant']['c_2'] * np.exp(-np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_dictionary['x']))
+
+        heat_1d_example_1.collocation = types.MethodType(collocation, heat_1d_example_1)
+        heat_1d_example_1.boundary = types.MethodType(boundary, heat_1d_example_1)
+        heat_1d_example_1.equation = types.MethodType(equation, heat_1d_example_1)
+        nn.train_network(batch_size=32,
+                         epochs=1000,
+                         optimizer=Adam(),
+                         plot={'x': np.linspace(0.0, 1.5, 10).astype(np.float64)},
+                         x_axis='x')
+
+    def heat_1d_transient():
+        heat_1d_example = GoverningEquation()
+        heat_1d_example.read_constant(constant={'alpha': 20,
+                                                'Qt': 10,
+                                                'c_1': 70.344995319758030,
+                                                'c_2': 2.796550046802420 * 10 ** 2,
+                                                'zero': 0.0,
+                                                'L': 1.5})
+
+        heat_1d_example.read_dependent_domain(dependent={'x': (0.0, 1.5),
+                                                         't': (0.0, 1.0)})
+        nn = NeuralNetwork(governing=heat_1d_example)
+        nn.set_layers(number_neurons_per_layer=[15, 30, 15, 1],
+                      activation_function='tanh')
+        nn.set_training(number_train_sets=1000)
+
+        def collocation(self, model, input_layer):
+            value = (self.derivative(differential={'t': 1}, model=model, input_layer=input_layer) -
+                     self.parameters['constant']['alpha'] * self.derivative(differential={'x': 2}, model=model, input_layer=input_layer) +
+                     self.parameters['constant']['Qt'] * model(input_layer))
+            return value
+
+        def boundary(self, model, input_layer):
+            batch_size = tf.shape(input_layer)[0]
+            T_0_t = model(tf.stack([tf.fill(batch_size, self.parameters['constant']['zero']), input_layer[(slice(None), self.index['t'])]], axis=1)) - 350
+            T_L_t = model(tf.stack([tf.fill(batch_size, self.parameters['constant']['L']), input_layer[(slice(None), self.index['t'])]], axis=1)) - 300
+            return T_0_t, T_L_t
+
+        def equation(self, input_dictionary):
+            return (self.parameters['constant']['c_1'] * np.exp(np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_dictionary['x']) +
+                    self.parameters['constant']['c_2'] * np.exp(-np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_dictionary['x']) +
+                    self.parameters['constant']['Qt'] * np.exp(-((self.parameters['constant']['alpha'] * (np.pi / 2) ** 2) + self.parameters['constant']['Qt']) * input_dictionary['t']) *
+                    np.sin(np.pi / 2 * input_dictionary['x']))
+
+        heat_1d_example.collocation = types.MethodType(collocation, heat_1d_example)
+        heat_1d_example.boundary = types.MethodType(boundary, heat_1d_example)
+        heat_1d_example.equation = types.MethodType(equation, heat_1d_example)
+        nn.train_network(batch_size=32,
+                         epochs=1000,
+                         optimizer=Adam(),
+                         plot={'x': np.linspace(0.0, 1.5, 10).astype(np.float64),
+                               't': np.linspace(0.0, 1.0, 10).astype(np.float64)},
+                         x_axis='x')
+
+    heat_1d_transient()
