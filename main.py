@@ -97,10 +97,7 @@ class NeuralNetwork:
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
         number_of_batches = len(self.training)
         progress_bar = Progbar(target=number_of_batches)
-
-        boundary = False
-        if 'boundary' in self.governing.__dict__:
-            boundary = True
+        loss_function = self.loss_function()
 
         if plot is not False and x_axis is not False:
             dynamic_plot = DynamicPlot()
@@ -118,11 +115,8 @@ class NeuralNetwork:
             step = 0
             for train_batch in self.training:
                 step += 1
-                # TODO: implement hybrid approach and case for when no collocation
                 with tf.GradientTape() as tape:
-                    loss = tf.reduce_mean(tf.square(self.governing.collocation(self.model, train_batch)))
-                    if boundary:
-                        loss = loss + tf.reduce_sum([tf.square(bound) for bound in self.governing.boundary(self.model, train_batch)])
+                    loss = loss_function(self.model, train_batch)
                 gradients = tape.gradient(loss, self.model.trainable_variables)
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
 
@@ -134,6 +128,16 @@ class NeuralNetwork:
                 else:
                     progress_bar.update(step, values=[('loss', loss)])
         return
+
+    def loss_function(self):
+        result = []
+        if 'collocation' in self.governing.__dict__:
+            result.append(lambda model, train_batch: tf.reduce_mean(tf.square(self.governing.collocation(model, train_batch))))
+        if 'boundary' in self.governing.__dict__:
+            result.append(lambda model, train_batch: tf.reduce_sum([tf.square(bound) for bound in self.governing.boundary(model, train_batch)]))
+        if 'hybrid' in self.governing.__dict__:
+            pass
+        return lambda model, train_batch: sum(point(model, train_batch) for point in result)
 
 
 class DynamicPlot:
@@ -440,4 +444,4 @@ if __name__ == "__main__":
                                't': np.linspace(0.0, 1.0, 10).astype(np.float64)},
                          x_axis='x')
 
-    heat_1d_transient()
+    rod_1()
