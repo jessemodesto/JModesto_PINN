@@ -92,7 +92,8 @@ class NeuralNetwork:
                                                         self.governing.parameters['dependent'][dependent_variable][1])
         return
 
-    def train_network(self, batch_size: int, epochs: int, optimizer=Adam(), plot: dict = False, x_axis: str = False):
+    def train_network(self, batch_size: int, epochs: int, optimizer=Adam(), error: float = 10 ** -3,
+                      plot: dict = False, x_axis: str = False):
         self.training = tf.data.Dataset.from_tensor_slices(self.training)
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
         number_of_batches = len(self.training)
@@ -110,6 +111,7 @@ class NeuralNetwork:
                     (plot[x_axis], np.zeros(len(output)))
                 ))
 
+        previous_prediction = 0
         for epoch in range(epochs):
             tf.print(f"Epoch: {epoch + 1}/{epochs}")
             step = 0
@@ -127,14 +129,22 @@ class NeuralNetwork:
                     progress_bar.update(step, values=[('loss', loss), ('test loss', test_loss)])
                 else:
                     progress_bar.update(step, values=[('loss', loss)])
+            if np.sum(np.abs(test_prediction - previous_prediction)) < error:
+                tf.print(np.sum(np.abs(test_prediction - previous_prediction)))
+                return
+            else:
+                tf.print(np.sum(np.abs(test_prediction - previous_prediction)))
+                previous_prediction = test_prediction
         return
 
     def loss_function(self):
         result = []
         if 'collocation' in self.governing.__dict__:
-            result.append(lambda model, train_batch: tf.reduce_mean(tf.square(self.governing.collocation(model, train_batch))))
+            result.append(lambda model, train_batch:
+                          tf.reduce_mean(tf.square(self.governing.collocation(model, train_batch))))
         if 'boundary' in self.governing.__dict__:
-            result.append(lambda model, train_batch: tf.reduce_sum([tf.square(bound) for bound in self.governing.boundary(model, train_batch)]))
+            result.append(lambda model, train_batch:
+                          tf.reduce_sum([tf.square(boundary) for boundary in self.governing.boundary(model, train_batch)]))
         if 'hybrid' in self.governing.__dict__:
             pass
         return lambda model, train_batch: sum(point(model, train_batch) for point in result)
@@ -199,7 +209,8 @@ if __name__ == "__main__":
         rod_example_1.collocation = types.MethodType(collocation, rod_example_1)
         rod_example_1.boundary = types.MethodType(boundary, rod_example_1)
         rod_example_1.equation = types.MethodType(equation, rod_example_1)
-        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
+        nn.train_network(batch_size=16, epochs=500,
+                         plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
 
     def rod_2():
         rod_example_2 = GoverningEquation()
@@ -444,4 +455,9 @@ if __name__ == "__main__":
                                't': np.linspace(0.0, 1.0, 10).astype(np.float64)},
                          x_axis='x')
 
+    def beam_2_transient():
+        pass
+        return
+
     rod_1()
+    print('here')
