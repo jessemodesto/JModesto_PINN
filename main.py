@@ -92,28 +92,42 @@ class NeuralNetwork:
                                                         self.governing.parameters['dependent'][dependent_variable][1])
         return
 
-    def train_network(self, batch_size: int, epochs: int, optimizer=Adam(), error: float = 10 ** -3,
-                      plot: dict = False, x_axis: str = False):
+    def set_testing(self, number_train_sets):
+        input_layer_size = len(self.governing.parameters['dependent'])
+        testing = np.zeros([number_train_sets, input_layer_size], dtype=np.float64)  # create input to test
+        for i, dependent_variable in enumerate(self.governing.parameters['dependent']):
+            for j in range(number_train_sets):
+                testing[j, i] = np.random.uniform(self.governing.parameters['dependent'][dependent_variable][0],
+                                                  self.governing.parameters['dependent'][dependent_variable][1])
+        return testing
+
+    def train_network(self, batch_size: int, epochs: int, optimizer=Adam(),
+                      test_parameters: dict = None):
         self.training = tf.data.Dataset.from_tensor_slices(self.training)
         self.training = self.training.shuffle(buffer_size=1024).batch(batch_size)
         number_of_batches = len(self.training)
         progress_bar = Progbar(target=number_of_batches)
         loss_function = self.loss_function()
 
-        if plot is not False and x_axis is not False:
-            dynamic_plot = DynamicPlot()
-            values = np.array([v for v in zip(*plot.values())], dtype=np.float64)
-            values_dict = [dict(zip(plot, v)) for v in zip(*plot.values())]
-            output = np.array([self.governing.equation(val) for val in values_dict], dtype=np.float64)
-            dynamic_plot.plot(
-                (
-                    (plot[x_axis], output),
-                    (plot[x_axis], np.zeros(len(output)))
-                ))
+        if test_parameters is not None:
+            testing = np.sort(self.set_testing(test_parameters['samples']), axis=0)
+            if 'test_error' in test_parameters.keys():
+                test_error = False
+            if 'epoch_error' in test_parameters.keys():
+                epoch_error = False
+                epoch_previous = 0
+            if 'plot_x' in test_parameters.keys():
+                testing_output = self.governing.equation(lambda x: 0, testing)
+                dynamic_plot = DynamicPlot()
+                if len(testing.shape) > 1:
+                    dynamic_plot.plot(pairs=((testing[:, self.governing.index[test_parameters['plot_x']]], testing_output),
+                                             (testing[:, self.governing.index[test_parameters['plot_x']]], np.zeros(len(testing_output)))))
+                else:
+                    dynamic_plot.plot(pairs=((testing, testing_output),
+                                             (testing, np.zeros(len(testing_output)))))
 
-        previous_prediction = 0
-        for epoch in range(epochs):
-            tf.print(f"Epoch: {epoch + 1}/{epochs}")
+        for epoch in range(1, epochs + 1):
+            tf.print(f"Epoch: {epoch}/{epochs}")
             step = 0
             for train_batch in self.training:
                 step += 1
@@ -121,32 +135,41 @@ class NeuralNetwork:
                     loss = loss_function(self.model, train_batch)
                 gradients = tape.gradient(loss, self.model.trainable_variables)
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+                progress_bar.update(step, values=[('loss', loss), ])
 
-                if plot is not False and x_axis is not False:
-                    test_prediction = np.array(self.model(values), dtype=np.float64).reshape(-1)
-                    dynamic_plot.update(y=test_prediction, plot_number=1)
-                    test_loss = np.mean(np.square(test_prediction - output), dtype=np.float64)
-                    progress_bar.update(step, values=[('loss', loss), ('test loss', test_loss)])
-                else:
-                    progress_bar.update(step, values=[('loss', loss)])
-            if np.sum(np.abs(test_prediction - previous_prediction)) < error:
-                tf.print(np.sum(np.abs(test_prediction - previous_prediction)))
-                return
-            else:
-                tf.print(np.sum(np.abs(test_prediction - previous_prediction)))
-                previous_prediction = test_prediction
+            if test_parameters is not None:
+                if 'test_error' in test_parameters.keys():
+                    testing_difference = np.mean(np.abs(self.governing.equation(self.model, testing)))
+                    tf.print(f"test_error: {testing_difference}")
+                    if testing_difference < test_parameters['test_error']:
+                        test_error = True
+                if 'epoch_error' in test_parameters.keys():
+                    # TODO: find out why np array needs to be converted to tensor
+                    epoch_value = loss_function(self.model, tf.convert_to_tensor(testing))
+                    epoch_difference = np.mean(np.abs(epoch_value - epoch_previous))
+                    tf.print(f"epoch_difference: {epoch_difference}")
+                    if epoch_difference < test_parameters['epoch_error']:
+                        epoch_error = True
+                    else:
+                        epoch_previous = epoch_value
+                if 'plot_x' in test_parameters.keys():
+                    testing_output = np.array(self.model(tf.convert_to_tensor(testing)), dtype=np.float64).reshape(-1)
+                    dynamic_plot.update(y=testing_output, plot_number=1)
+                if any((test_error, epoch_error)):
+                    return
         return
 
-    def loss_function(self):
+    def loss_function(self, collocation: bool = True, boundary: bool = True, hybrid: bool = False):
         result = []
-        if 'collocation' in self.governing.__dict__:
+        if 'collocation' in self.governing.__dict__ and collocation:
             result.append(lambda model, train_batch:
                           tf.reduce_mean(tf.square(self.governing.collocation(model, train_batch))))
-        if 'boundary' in self.governing.__dict__:
+        if 'boundary' in self.governing.__dict__ and boundary:
             result.append(lambda model, train_batch:
-                          tf.reduce_sum([tf.square(boundary) for boundary in self.governing.boundary(model, train_batch)]))
-        if 'hybrid' in self.governing.__dict__:
-            pass
+                          tf.reduce_sum([tf.square(bc) for bc in self.governing.boundary(model, train_batch)]))
+        if 'equation' in self.governing.__dict__ and hybrid:
+            result.append(lambda model, train_batch:
+                          tf.reduce_mean(tf.square(self.governing.equation(model, train_batch))))
         return lambda model, train_batch: sum(point(model, train_batch) for point in result)
 
 
@@ -203,14 +226,21 @@ if __name__ == "__main__":
                                   input_layer=self.parameters['constant']['length'])
             return fix, end
 
-        def equation(self, input_dictionary):
-            return self.parameters['constant']['c'] / 6.0 / self.parameters['constant']['A'] / self.parameters['constant']['E'] * (-(input_dictionary['x'] ** 3) + (3 * (self.parameters['constant']['L'] ** 2) * input_dictionary['x']))
+        def equation(self, model, input_layer):
+            return (self.parameters['constant']['c'] /
+                    self.parameters['constant']['A'] /
+                    self.parameters['constant']['E'] / 6 *
+                    (-input_layer ** 3 +
+                     (3 * input_layer * self.parameters['constant']['L'] ** 2))) - model(input_layer)
 
         rod_example_1.collocation = types.MethodType(collocation, rod_example_1)
         rod_example_1.boundary = types.MethodType(boundary, rod_example_1)
         rod_example_1.equation = types.MethodType(equation, rod_example_1)
-        nn.train_network(batch_size=16, epochs=500,
-                         plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
+        nn.train_network(batch_size=16,
+                         epochs=500,
+                         test_parameters={'samples': 100,
+                                          'test_error': 10 ** -4,
+                                          'epoch_error': 10 ** -4})
 
     def rod_2():
         rod_example_2 = GoverningEquation()
@@ -243,13 +273,21 @@ if __name__ == "__main__":
                    self.parameters['constant']['c'] / 2 / self.parameters['constant']['A'] / self.parameters['constant']['E'] * self.parameters['constant']['L'] ** 2)
             return fix, end
 
-        def equation(self, input_dictionary):
-            return self.parameters['constant']['c'] / self.parameters['constant']['A'] / self.parameters['constant']['E'] * (-(input_dictionary['x'] ** 3) / 6 + (self.parameters['constant']['L'] ** 2) * input_dictionary['x'])
+        def equation(self, model, input_layer):
+            return (self.parameters['constant']['c'] /
+                    self.parameters['constant']['A'] /
+                    self.parameters['constant']['E'] *
+                    (-input_layer ** 3 / 6 +
+                     (input_layer * self.parameters['constant']['L'] ** 2))) - model(input_layer)
 
         rod_example_2.collocation = types.MethodType(collocation, rod_example_2)
         rod_example_2.boundary = types.MethodType(boundary, rod_example_2)
         rod_example_2.equation = types.MethodType(equation, rod_example_2)
-        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
+        nn.train_network(batch_size=16,
+                         epochs=500,
+                         test_parameters={'samples': 100,
+                                          'test_error': 10 ** -4,
+                                          'epoch_error': 10 ** -4})
 
     def beam_1():
         beam_example_1 = GoverningEquation()
@@ -283,13 +321,21 @@ if __name__ == "__main__":
                                         input_layer=self.parameters['constant']['length'])
             return y_0, y_L, d2y_dx2_0, d2y_dx2_L
 
-        def equation(self, input_dictionary):
-            return self.parameters['constant']['w'] / self.parameters['constant']['E'] / self.parameters['constant']['I'] / 24.0 * (-input_dictionary['x'] ** 4 + 2.0 * self.parameters['constant']['L'] * input_dictionary['x'] ** 3 - self.parameters['constant']['L'] ** 3 * input_dictionary['x'])
+        def equation(self, model, input_layer):
+            return (self.parameters['constant']['w'] /
+                    self.parameters['constant']['E'] /
+                    self.parameters['constant']['I'] / 24.0 *
+                    (-input_layer ** 4 + 2.0 * self.parameters['constant']['L'] * input_layer ** 3 -
+                     input_layer * self.parameters['constant']['L'] ** 3)) - model(input_layer)
 
         beam_example_1.collocation = types.MethodType(collocation, beam_example_1)
         beam_example_1.boundary = types.MethodType(boundary, beam_example_1)
         beam_example_1.equation = types.MethodType(equation, beam_example_1)
-        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
+        nn.train_network(batch_size=16,
+                         epochs=500,
+                         test_parameters={'samples': 100,
+                                          'test_error': 10 ** -4,
+                                          'epoch_error': 10 ** -4})
 
     def beam_2():
         beam_example_2 = GoverningEquation()
@@ -325,13 +371,21 @@ if __name__ == "__main__":
                                         input_layer=self.parameters['constant']['length'])
             return y_0, dy_dx_0, d2y_dx2_L, d3y_dx3_L
 
-        def equation(self, input_dictionary):
-            return self.parameters['constant']['w'] / self.parameters['constant']['E'] / self.parameters['constant']['I'] / 24.0 * (-input_dictionary['x'] ** 4 + 4.0 * self.parameters['constant']['L'] * input_dictionary['x'] ** 3 - 6.0 * self.parameters['constant']['L'] ** 2 * input_dictionary['x'] ** 2)
+        def equation(self, model, input_layer):
+            return (self.parameters['constant']['w'] /
+                    self.parameters['constant']['E'] /
+                    self.parameters['constant']['I'] / 24.0 *
+                    (-input_layer ** 4 + 4.0 * self.parameters['constant']['L'] * input_layer ** 3 -
+                     6.0 * self.parameters['constant']['L'] ** 2 * input_layer ** 2)) - model(input_layer)
 
         beam_example_2.collocation = types.MethodType(collocation, beam_example_2)
         beam_example_2.boundary = types.MethodType(boundary, beam_example_2)
         beam_example_2.equation = types.MethodType(equation, beam_example_2)
-        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
+        nn.train_network(batch_size=16,
+                         epochs=500,
+                         test_parameters={'samples': 100,
+                                          'test_error': 10 ** -4,
+                                          'epoch_error': 10 ** -4})
 
     def beam_3():
         beam_example_3 = GoverningEquation()
@@ -365,13 +419,22 @@ if __name__ == "__main__":
                                         input_layer=self.parameters['constant']['length'])
             return y_0, y_L, dy_dx_0, d2y_dx2_L
 
-        def equation(self, input_dictionary):
-            return self.parameters['constant']['w'] / self.parameters['constant']['E'] / self.parameters['constant']['I'] / 24.0 * (-input_dictionary['x'] ** 4 + 5.0 / 2.0 * self.parameters['constant']['L'] * input_dictionary['x'] ** 3 - 3.0 / 2.0 * input_dictionary['x'] ** 2)
+        def equation(self, model, input_layer):
+            return (self.parameters['constant']['w'] /
+                    self.parameters['constant']['E'] /
+                    self.parameters['constant']['I'] / 24.0 *
+                    (-input_layer ** 4 +
+                     5.0 / 2.0 * self.parameters['constant']['L'] * input_layer ** 3 -
+                     3.0 / 2.0 * input_layer ** 2)) - model(input_layer)
 
         beam_example_3.collocation = types.MethodType(collocation, beam_example_3)
         beam_example_3.boundary = types.MethodType(boundary, beam_example_3)
         beam_example_3.equation = types.MethodType(equation, beam_example_3)
-        nn.train_network(batch_size=16, epochs=500, plot={'x': np.linspace(0, 1, 10).astype(np.float64)}, x_axis='x')
+        nn.train_network(batch_size=16,
+                         epochs=500,
+                         test_parameters={'samples': 100,
+                                          'test_error': 10 ** -4,
+                                          'epoch_error': 10 ** -4})
 
     def heat_1d_stationary():
         heat_1d_example_1 = GoverningEquation()
@@ -398,18 +461,22 @@ if __name__ == "__main__":
             T_L = model(self.parameters['constant']['length']) - 300
             return T_0, T_L
 
-        def equation(self, input_dictionary):
-            return (self.parameters['constant']['c_1'] * np.exp(np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_dictionary['x']) +
-                    self.parameters['constant']['c_2'] * np.exp(-np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_dictionary['x']))
+        def equation(self, model, input_layer):
+            return (self.parameters['constant']['c_1'] *
+                    np.exp(np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) *
+                           input_layer) +
+                    self.parameters['constant']['c_2'] *
+                    np.exp(-np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) *
+                           input_layer)) - model(input_layer)
 
         heat_1d_example_1.collocation = types.MethodType(collocation, heat_1d_example_1)
         heat_1d_example_1.boundary = types.MethodType(boundary, heat_1d_example_1)
         heat_1d_example_1.equation = types.MethodType(equation, heat_1d_example_1)
-        nn.train_network(batch_size=32,
-                         epochs=1000,
-                         optimizer=Adam(),
-                         plot={'x': np.linspace(0.0, 1.5, 10).astype(np.float64)},
-                         x_axis='x')
+        nn.train_network(batch_size=16,
+                         epochs=500,
+                         test_parameters={'samples': 100,
+                                          'test_error': 10 ** -4,
+                                          'epoch_error': 10 ** -4})
 
     def heat_1d_transient():
         heat_1d_example = GoverningEquation()
@@ -439,25 +506,27 @@ if __name__ == "__main__":
             T_L_t = model(tf.stack([tf.fill(batch_size, self.parameters['constant']['L']), input_layer[(slice(None), self.index['t'])]], axis=1)) - 300
             return T_0_t, T_L_t
 
-        def equation(self, input_dictionary):
-            return (self.parameters['constant']['c_1'] * np.exp(np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_dictionary['x']) +
-                    self.parameters['constant']['c_2'] * np.exp(-np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_dictionary['x']) +
-                    self.parameters['constant']['Qt'] * np.exp(-((self.parameters['constant']['alpha'] * (np.pi / 2) ** 2) + self.parameters['constant']['Qt']) * input_dictionary['t']) *
-                    np.sin(np.pi / 2 * input_dictionary['x']))
+        def equation(self, model, input_layer):
+            return (self.parameters['constant']['c_1'] *
+                    np.exp(np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_layer[(slice(None), self.index['x'])]) +
+                    self.parameters['constant']['c_2'] *
+                    np.exp(-np.sqrt(self.parameters['constant']['Qt'] / self.parameters['constant']['alpha']) * input_layer[(slice(None), self.index['x'])]) +
+                    self.parameters['constant']['Qt'] *
+                    np.exp(-((self.parameters['constant']['alpha'] * (np.pi / 2) ** 2) + self.parameters['constant']['Qt']) * input_layer[(slice(None), self.index['t'])]) *
+                    np.sin(np.pi / 2 * input_layer[(slice(None), self.index['x'])])) - model(input_layer)
 
         heat_1d_example.collocation = types.MethodType(collocation, heat_1d_example)
         heat_1d_example.boundary = types.MethodType(boundary, heat_1d_example)
         heat_1d_example.equation = types.MethodType(equation, heat_1d_example)
-        nn.train_network(batch_size=32,
-                         epochs=1000,
-                         optimizer=Adam(),
-                         plot={'x': np.linspace(0.0, 1.5, 10).astype(np.float64),
-                               't': np.linspace(0.0, 1.0, 10).astype(np.float64)},
-                         x_axis='x')
+        nn.train_network(batch_size=16,
+                         epochs=500,
+                         test_parameters={'samples': 1000,
+                                          'test_error': 10 ** -4,
+                                          'epoch_error': 10 ** -4,
+                                          'plot_x': 'x'})
 
     def beam_2_transient():
         pass
         return
 
     rod_1()
-    print('here')
