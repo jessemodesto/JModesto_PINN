@@ -1,5 +1,6 @@
 import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+import time
 import types
 import numpy as np
 import matplotlib
@@ -10,6 +11,9 @@ from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.initializers import HeNormal
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import Progbar
+import csv
+import itertools
+
 matplotlib.use("QtAgg")  # Comment out if PyQt is not installed
 
 
@@ -110,11 +114,10 @@ class NeuralNetwork:
         loss_function = self.loss_function()
 
         if test_parameters is not None:
+            test_error = False
+            epoch_error = False
             testing = np.sort(self.set_testing(test_parameters['samples']), axis=0)
-            if 'test_error' in test_parameters.keys():
-                test_error = False
             if 'epoch_error' in test_parameters.keys():
-                epoch_error = False
                 epoch_previous = 0
             if 'plot_x' in test_parameters.keys():
                 testing_output = self.governing.equation(lambda x: 0, testing)
@@ -156,7 +159,9 @@ class NeuralNetwork:
                     testing_output = np.array(self.model(tf.convert_to_tensor(testing)), dtype=np.float64).reshape(-1)
                     dynamic_plot.update(y=testing_output, plot_number=1)
                 if any((test_error, epoch_error)):
-                    return
+                    loss = loss_function(self.model, tf.convert_to_tensor(testing))
+                    loss = loss.numpy()
+                    return epoch, loss
         return
 
     def loss_function(self, collocation: bool = True, boundary: bool = True, hybrid: bool = False):
@@ -196,7 +201,7 @@ class DynamicPlot:
 
 
 if __name__ == "__main__":
-    def rod_1():
+    def rod_1(layers: list, training_sets: int, batch_size: int):
         rod_example_1 = GoverningEquation()
         rod_example_1.read_constant(constant={'c': 1.0,
                                               'A': 1.0,
@@ -206,9 +211,9 @@ if __name__ == "__main__":
                                               'length': tf.constant(1.0, shape=(1, 1), dtype=tf.float64)})
         rod_example_1.read_dependent_domain(dependent={'x': (0.0, 'L')})
         nn = NeuralNetwork(governing=rod_example_1)
-        nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
+        nn.set_layers(number_neurons_per_layer=layers,
                       activation_function='tanh')
-        nn.set_training(number_train_sets=1000)
+        nn.set_training(number_train_sets=training_sets)
 
         def collocation(self, model, input_layer):
             value = (self.parameters['constant']['A'] *
@@ -236,11 +241,12 @@ if __name__ == "__main__":
         rod_example_1.collocation = types.MethodType(collocation, rod_example_1)
         rod_example_1.boundary = types.MethodType(boundary, rod_example_1)
         rod_example_1.equation = types.MethodType(equation, rod_example_1)
-        nn.train_network(batch_size=16,
-                         epochs=500,
-                         test_parameters={'samples': 100,
-                                          'test_error': 10 ** -4,
-                                          'epoch_error': 10 ** -4})
+        start_time = time.time()
+        epoch, test_error = nn.train_network(batch_size=batch_size,
+                                  epochs=50000,
+                                  test_parameters={'samples': 100,
+                                                   'test_error': 10 ** -4})
+        return time.time()-start_time, epoch, test_error
 
     def rod_2():
         rod_example_2 = GoverningEquation()
@@ -526,7 +532,70 @@ if __name__ == "__main__":
                                           'plot_x': 'x'})
 
     def beam_2_transient():
-        pass
-        return
+        beam_2_transient_example = GoverningEquation()
+        beam_2_transient_example.read_constant(constant={'E': 1.0,
+                                                         'I': 1.0,
+                                                         'L': 1.0,
+                                                         'rho': 1.0,
+                                                         'zero': 0.0})
 
-    rod_1()
+        def collocation(self, model, input_layer):
+            value = (self.parameters['constant']['E'] /
+                     self.parameters['constant']['I'] *
+                     self.derivative(differential={'x': 4}, model=model, input_layer=input_layer) +
+                     self.parameters['constant']['rho'] *
+                     self.derivative(differential={'t': 2}, model=model, input_layer=input_layer))
+            return value
+
+        def boundary(self, model, input_layer):
+            batch_size = tf.shape(input_layer)[0]
+            y_0_t = model(tf.stack([tf.fill(batch_size, self.parameters['constant']['zero']), input_layer[(slice(None), self.index['t'])]], axis=1))
+            dy_dx_0_t = self.derivative(differential={'x': 1},
+                                        model=model,
+                                        input_layer=self.parameters['constant']['zero'])
+            d2y_dx2_L_t = self.derivative(differential={'x': 2},
+                                          model=model,
+                                          input_layer=self.parameters['constant']['length'])
+            d3y_dx3_L_t = self.derivative(differential={'x': 3},
+                                          model=model,
+                                          input_layer=self.parameters['constant']['length'])
+            return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t
+
+    def append_to_csv(file_name, data):
+        with open(file_name, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(data)
+
+    layers = (
+        [25, 25, 1],
+        [10, 10, 10, 10, 10, 1],
+        [5, 10, 10, 10, 10, 5, 1],
+        [10, 15, 15, 10, 1],
+        [5, 20, 20, 5, 1],
+        [5, 10, 15, 15, 5, 1],
+        [5, 15, 15, 10, 5, 1]
+    )
+
+    training_sets = (
+        50,
+        100,
+        500,
+        1000,
+        5000
+    )
+
+    batch_sizes = (
+        4,
+        8,
+        16,
+        32,
+        64
+    )
+
+    with open('training_results.csv', mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["Time (s)", "Epochs", "Loss", "Layers", "Training Sets", "Batch Size"])
+
+    for layer, training, batch in itertools.product(layers, training_sets, batch_sizes):
+        values = rod_1(layers=layer, training_sets=training, batch_size=batch)
+        append_to_csv('training_results.csv', values + (layer, training, batch))
