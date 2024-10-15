@@ -561,41 +561,46 @@ if __name__ == "__main__":
                                           input_layer=self.parameters['constant']['length'])
             return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t
 
-    def append_to_csv(file_name, data):
-        with open(file_name, mode='a', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(data)
+    def elliptical():
+        elliptical_example = GoverningEquation()
+        elliptical_example.read_constant(constant={'zero': tf.constant(0., shape=(1, 1), dtype=tf.float64),
+                                                   'one': tf.constant(1., shape=(1, 1), dtype=tf.float64),
+                                                   'kappa': 1.4})
+        elliptical_example.read_dependent_domain(dependent={'x': (0.0, 1.0)})
+        nn = NeuralNetwork(governing=elliptical_example)
+        nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
+                      activation_function='tanh')
+        nn.set_training(number_train_sets=1000)
 
-    layers = (
-        [25, 25, 1],
-        [10, 10, 10, 10, 10, 1],
-        [5, 10, 10, 10, 10, 5, 1],
-        [10, 15, 15, 10, 1],
-        [5, 20, 20, 5, 1],
-        [5, 10, 15, 15, 5, 1],
-        [5, 15, 15, 10, 5, 1]
-    )
+        def collocation(self, model, input_layer):
+            value = (self.derivative(differential={'x': 2},
+                                     model=model,
+                                     input_layer=input_layer) +
+                     tf.math.sin(2.0 * np.pi *
+                                 input_layer *
+                                 self.parameters['constant']['kappa']))
+            return value
 
-    training_sets = (
-        50,
-        100,
-        500,
-        1000,
-        5000
-    )
+        def boundary(self, model, input_layer):
+            #batch_size = tf.shape(input_layer)[0]
+            start = model(self.parameters['constant']['zero'])
+            end = model(self.parameters['constant']['one'])
+            #end = model(tf.stack([tf.fill(batch_size, self.parameters['constant']['one']), tf.fill(batch_size, self.parameters['constant']['kappa'])], axis=1))
+            return start, end
 
-    batch_sizes = (
-        4,
-        8,
-        16,
-        32,
-        64
-    )
+        def equation(self, model, input_layer):
+            return (1 / ((2.0 * np.pi * self.parameters['constant']['kappa']) ** 2) *
+                    (tf.math.sin(2 * np.pi * self.parameters['constant']['kappa'] * input_layer) -
+                     tf.math.sin(2 * np.pi * self.parameters['constant']['kappa']) * input_layer)
+                    ) - model(input_layer)
+        elliptical_example.collocation = types.MethodType(collocation, elliptical_example)
+        elliptical_example.boundary = types.MethodType(boundary, elliptical_example)
+        elliptical_example.equation = types.MethodType(equation, elliptical_example)
+        nn.train_network(batch_size=16,
+                         epochs=500,
+                         test_parameters={'samples': 100,
+                                          'test_error': 10 ** -4,
+                                          'plot_x': 'x'})
 
-    with open('training_results.csv', mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["Time (s)", "Epochs", "Loss", "Layers", "Training Sets", "Batch Size"])
 
-    for layer, training, batch in itertools.product(layers, training_sets, batch_sizes):
-        values = rod_1(layers=layer, training_sets=training, batch_size=batch)
-        append_to_csv('training_results.csv', values + (layer, training, batch))
+    elliptical()
