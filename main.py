@@ -98,8 +98,10 @@ class NeuralNetwork:
 
     def set_testing(self, number_train_sets):
         input_layer_size = len(self.governing.parameters['dependent'])
-        testing = np.zeros([number_train_sets, input_layer_size], dtype=np.float64)  # create input to test
+        testing = np.ones([number_train_sets, input_layer_size], dtype=np.float64)  # create input to test
         for i, dependent_variable in enumerate(self.governing.parameters['dependent']):
+            if i == 1:
+                return testing
             for j in range(number_train_sets):
                 testing[j, i] = np.random.uniform(self.governing.parameters['dependent'][dependent_variable][0],
                                                   self.governing.parameters['dependent'][dependent_variable][1])
@@ -123,8 +125,8 @@ class NeuralNetwork:
                 testing_output = self.governing.equation(lambda x: 0, testing)
                 dynamic_plot = DynamicPlot()
                 if len(testing.shape) > 1:
-                    dynamic_plot.plot(pairs=((testing[:, self.governing.index[test_parameters['plot_x']]], testing_output),
-                                             (testing[:, self.governing.index[test_parameters['plot_x']]], np.zeros(len(testing_output)))))
+                    dynamic_plot.plot(pairs=((testing[:, self.governing.index[test_parameters['plot_x']]], np.zeros(100, dtype=np.float64)),
+                                             (testing[:, self.governing.index[test_parameters['plot_x']]], np.zeros(100, dtype=np.float64))))
                 else:
                     dynamic_plot.plot(pairs=((testing, testing_output),
                                              (testing, np.zeros(len(testing_output)))))
@@ -164,7 +166,7 @@ class NeuralNetwork:
                     return epoch, loss
         return
 
-    def loss_function(self, collocation: bool = True, boundary: bool = True, hybrid: bool = False):
+    def loss_function(self, collocation: bool = True, boundary: bool = True, hybrid: bool = False, inverse: bool = False):
         result = []
         if 'collocation' in self.governing.__dict__ and collocation:
             result.append(lambda model, train_batch:
@@ -175,6 +177,9 @@ class NeuralNetwork:
         if 'equation' in self.governing.__dict__ and hybrid:
             result.append(lambda model, train_batch:
                           tf.reduce_mean(tf.square(self.governing.equation(model, train_batch))))
+        if 'inverse' in self.governing.__dict__ and inverse:
+            pass
+
         return lambda model, train_batch: sum(point(model, train_batch) for point in result)
 
 
@@ -537,7 +542,15 @@ if __name__ == "__main__":
                                                          'I': 1.0,
                                                          'L': 1.0,
                                                          'rho': 1.0,
-                                                         'zero': 0.0})
+                                                         'zero': 0.0,
+                                                         'zero_t': tf.constant(0, shape=(1, 1), dtype=tf.float64),
+                                                         'length_t': tf.constant(1.0, shape=(1, 1), dtype=tf.float64)})
+        beam_2_transient_example.read_dependent_domain(dependent={'x': (0.0, 'L'),
+                                                                  't': (0.0, 1.0)})
+        nn = NeuralNetwork(governing=beam_2_transient_example)
+        nn.set_layers(number_neurons_per_layer=[15, 30, 15, 1],
+                      activation_function='tanh')
+        nn.set_training(number_train_sets=1000)
 
         def collocation(self, model, input_layer):
             value = (self.parameters['constant']['E'] /
@@ -550,16 +563,30 @@ if __name__ == "__main__":
         def boundary(self, model, input_layer):
             batch_size = tf.shape(input_layer)[0]
             y_0_t = model(tf.stack([tf.fill(batch_size, self.parameters['constant']['zero']), input_layer[(slice(None), self.index['t'])]], axis=1))
+            y_L_0 = self.derivative(differential={'t': 1},
+                                    model=model,
+                                    input_layer=tf.stack([tf.fill(batch_size, self.parameters['constant']['L']), tf.fill(batch_size, self.parameters['constant']['zero'])], axis=1)) + 1.0
             dy_dx_0_t = self.derivative(differential={'x': 1},
                                         model=model,
-                                        input_layer=self.parameters['constant']['zero'])
+                                        input_layer=tf.stack([tf.fill(batch_size, self.parameters['constant']['zero']), input_layer[(slice(None), self.index['t'])]], axis=1))
             d2y_dx2_L_t = self.derivative(differential={'x': 2},
                                           model=model,
-                                          input_layer=self.parameters['constant']['length'])
+                                          input_layer=tf.stack([tf.fill(batch_size, self.parameters['constant']['L']), input_layer[(slice(None), self.index['t'])]], axis=1))
             d3y_dx3_L_t = self.derivative(differential={'x': 3},
                                           model=model,
-                                          input_layer=self.parameters['constant']['length'])
-            return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t
+                                          input_layer=tf.stack([tf.fill(batch_size, self.parameters['constant']['L']), input_layer[(slice(None), self.index['t'])]], axis=1))
+            return y_0_t[:,0], dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t, y_L_0
+
+        def equation(self, model, input_layer):
+            return model(input_layer)
+
+        beam_2_transient_example.collocation = types.MethodType(collocation, beam_2_transient_example)
+        beam_2_transient_example.boundary = types.MethodType(boundary, beam_2_transient_example)
+        beam_2_transient_example.equation = types.MethodType(equation, beam_2_transient_example)
+        nn.train_network(batch_size=16,
+                         epochs=500,
+                         test_parameters={'samples': 100,
+                                          'plot_x': 'x'})
 
     def elliptical():
         elliptical_example = GoverningEquation()
@@ -582,10 +609,8 @@ if __name__ == "__main__":
             return value
 
         def boundary(self, model, input_layer):
-            #batch_size = tf.shape(input_layer)[0]
             start = model(self.parameters['constant']['zero'])
             end = model(self.parameters['constant']['one'])
-            #end = model(tf.stack([tf.fill(batch_size, self.parameters['constant']['one']), tf.fill(batch_size, self.parameters['constant']['kappa'])], axis=1))
             return start, end
 
         def equation(self, model, input_layer):
@@ -602,5 +627,41 @@ if __name__ == "__main__":
                                           'test_error': 10 ** -4,
                                           'plot_x': 'x'})
 
+    def lrc_circuit():
+        lrc_example = GoverningEquation()
+        lrc_example.read_constant(constant={'V_0': 12.0,
+                                            'L_analytic': 1.5,
+                                            'R_analytic': 1.2,
+                                            'C_analytic': 0.3,
+                                            'L_train': tf.Variable(0.1, trainable=True, dtype=tf.float64),
+                                            'R_train': tf.Variable(0.1, trainable=True, dtype=tf.float64),
+                                            'C_train': tf.Variable(0.1, trainable=True, dtype=tf.float64),
+                                            'zero': tf.constant(0., shape=(1, 1), dtype=tf.float64)})
+        lrc_example.read_dependent_domain(dependent={'t': (0.0, 6.0)})
+        nn = NeuralNetwork(governing=lrc_example)
+        nn.set_layers(number_neurons_per_layer=[10, 15, 10, 1],
+                      activation_function='tanh')
+        nn.set_training(number_train_sets=1000)
 
-    elliptical()
+        def collocation(self, model, input_layer):
+            value = (self.parameters['constant']['L_train'] * self.derivative(differential={'t': 2}, model=model, input_layer=input_layer) +
+                     self.parameters['constant']['R_train'] * self.derivative(differential={'t': 1}, model=model, input_layer=input_layer) +
+                     1 / self.parameters['constant']['C_train'] * model(input_layer))
+            return value
+
+        def boundary(self, model, input_layer):
+            eq_3 = model(self.parameters['constant']['zero'])
+            eq_4 = self.parameters['constant']['L_train'] * self.derivative(differential={'t': 1}, model=model, input_layer=self.parameters['constant']['zero']) - self.parameters['constant']['V_0']
+            return eq_3, eq_4
+
+        def equation(self, model, input_layer):
+            return 5.57 * tf.exp(-0.4 * input_layer) * tf.math.sin(1.44 * input_layer) - model(input_layer)
+
+        def inverse(self, model, input_layer, equation_model=equation(model=lambda x: 0, input_layer=tf.keras.Input(shape=(1,)))):
+
+            analytic = (self.parameters['constant']['L_analytic'] * self.derivative(differential={'t': 2}, model=equation_model, input_layer=input_layer) +
+                        self.parameters['constant']['R_analytic'] * self.derivative(differential={'t': 1}, model=equation_model, input_layer=input_layer) +
+                        1 / self.parameters['constant']['C_analytic'] * model(input_layer))
+
+
+    beam_2_transient()
