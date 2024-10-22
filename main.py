@@ -66,19 +66,19 @@ class PINN:
                              kernel_initializer=HeNormal(),
                              dtype='float64'))
 
-    def d(self, wrt: dict, model, train_batch):
+    def d(self, wrt: dict, model, data):
         max_order = sum(wrt.values())
         if max_order == 1:
             with tf.GradientTape(persistent=False) as tape:
-                tape.watch(train_batch)
-                value = model(train_batch)
-            value = tape.gradient(value, train_batch)
+                tape.watch(data)
+                value = model(data)
+            value = tape.gradient(value, data)
         else:
             with tf.GradientTape(persistent=True) as tape:
-                tape.watch(train_batch)
-                value = model(train_batch)
+                tape.watch(data)
+                value = model(data)
                 for i in range(max_order):
-                    value = tape.gradient(value, train_batch)
+                    value = tape.gradient(value, data)
         if len(self.i) == 1:
             return value
         else:
@@ -168,8 +168,8 @@ if __name__ == "__main__":
         activation_function='tanh')  # activation function
 
     def collocation(self, model, data):
-        value = (self.d(wrt={'t': 1}, model=model, train_batch=data) -
-                 self.v['c']['alpha'] * self.d(wrt={'x': 2}, model=model, train_batch=data) +
+        value = (self.d(wrt={'t': 1}, model=model, data=data) -
+                 self.v['c']['alpha'] * self.d(wrt={'x': 2}, model=model, data=data) +
                  self.v['c']['Q_t'] * model(data))
         return value
 
