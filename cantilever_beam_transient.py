@@ -1,5 +1,4 @@
 from main import PINN
-import pandas as pd
 import tensorflow as tf
 import numpy as np
 import types
@@ -25,12 +24,10 @@ if __name__ == "__main__":
         layers=[10, 15, 25, 15, 10, 1],  # neuron per layers
         activation_function='tanh')
 
-
     def collocation(self, model, data):
         value = (self.v['c']['E'] / self.v['c']['I'] * self.d(wrt={'x': 4}, model=model, data=data) +
                  self.v['c']['rho'] * self.d(wrt={'t': 2}, model=model, data=data))
         return value
-
 
     def boundary(self, model, data):
         y_0_t = model(tf.stack([self.v['c']['0'], data], axis=1))
@@ -48,16 +45,13 @@ if __name__ == "__main__":
                              data=tf.stack([self.v['c']['L'], data], axis=1))
         return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t, y_L_0
 
-
     def equation(self, model, data):
         return self.v['c']['solution'] - model(data)
-
 
     def loss_function(self, model, train_data):
         loss = tf.reduce_mean(tf.square(self.collocation(model, train_data['collocation'])))
         loss += tf.reduce_sum([tf.reduce_mean(tf.square(bc)) for bc in self.boundary(model, train_data['boundary'])])
         return loss
-
 
     pinn.collocation = types.MethodType(collocation, pinn)
     pinn.boundary = types.MethodType(boundary, pinn)

@@ -88,11 +88,11 @@ class PINN:
         if optimizer is None:
             optimizer = Adam()
         if plot_x is not None:
-            testing_output = self.equation(lambda x: 0, self.data['test'])
+            testing_output = tf.reshape(self.equation(lambda x: 0, self.data['test']), [-1])
             dynamic_plot = DynamicPlot()
             dynamic_plot.plot(pairs=(
-                (self.data['test'][:, self.i[plot_x]], testing_output[0, :]),
-                (self.data['test'][:, self.i[plot_x]], tf.zeros([testing_output.shape[1]], dtype=tf.float64))))
+                (self.data['test'][:, self.i[plot_x]], testing_output),
+                (self.data['test'][:, self.i[plot_x]], tf.zeros([testing_output.shape[0]], dtype=tf.float64))))
         if batches is None:  # full size batching
             progress_bar = Progbar(target=epochs)
             for epoch in range(1, epochs + 1):
@@ -123,7 +123,7 @@ class PINN:
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
                 progress_bar.update(step, values=[('loss', loss), ])
                 if plot_x is not None:
-                    testing_output = self.model(self.data['test'])[:, 0]
+                    testing_output = tf.reshape(self.model(self.data['test']), [-1])
                     dynamic_plot.update(y=testing_output, plot_number=1)
         return
 
