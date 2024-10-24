@@ -10,11 +10,12 @@ if __name__ == "__main__":
                          0.0533594116569, 0.0593618489802, 0.0654907599092, 0.0717145204544, 0.0780015215278],
                         dtype=np.float64)
     pinn = PINN(  # constants declared here so that they are not constructed each time in functions
-        constants={'rho': tf.constant(value=2700., shape=(1, 1), dtype=tf.float64),
-                   'E': tf.constant(value=70. * 10 ** 9, shape=(1, 1), dtype=tf.float64),
-                   'I': tf.constant(value=np.pi * 0.1 ** 4 / 4., shape=(1, 1), dtype=tf.float64),
+        constants={'rho': tf.constant(value=1.0, shape=(1, 1), dtype=tf.float64),
+                   'E': tf.constant(value=1.0, shape=(1, 1), dtype=tf.float64),
+                   'I': tf.constant(value=1.0, shape=(1, 1), dtype=tf.float64),
                    'L': tf.constant(value=2.0, shape=(101, 1), dtype=tf.float64),
                    '0': tf.constant(value=0.0, shape=(101, 1), dtype=tf.float64),
+                   'omega': tf.constant(value=0.0, shape=(101, 1), dtype=tf.float64),
                    'solution': tf.expand_dims(tf.convert_to_tensor(solution, dtype=tf.float64), axis=0)},
         data={'collocation': {'x': np.random.uniform(low=0.0, high=2.0, size=21),  # datasets for each training method
                               't': np.random.uniform(low=0.0, high=3.32, size=101)},
@@ -31,9 +32,9 @@ if __name__ == "__main__":
 
     def boundary(self, model, data):
         y_0_t = model(tf.stack([self.v['c']['0'], data], axis=1))
-        y_L_0 = self.d(wrt={'t': 1},
+        y_L_t = self.d(wrt={'x': 3},
                        model=model,
-                       data=tf.stack([self.v['c']['L'], data], axis=1)) - 0.1
+                       data=tf.stack([self.v['c']['L'], data], axis=1)) + tf.math.sin(self.v['c']['omega'] * data)
         dy_dx_0_t = self.d(wrt={'x': 1},
                            model=model,
                            data=tf.stack([self.v['c']['0'], data], axis=1))
@@ -43,7 +44,7 @@ if __name__ == "__main__":
         d3y_dx3_L_t = self.d(wrt={'x': 4},
                              model=model,
                              data=tf.stack([self.v['c']['L'], data], axis=1))
-        return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t, y_L_0
+        return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t, y_L_t
 
     def equation(self, model, data):
         return self.v['c']['solution'] - model(data)

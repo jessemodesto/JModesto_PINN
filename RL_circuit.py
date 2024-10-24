@@ -12,7 +12,7 @@ if __name__ == "__main__":
         data={'collocation': {'t': np.random.uniform(low=0.0, high=6.0, size=1001)},
               'test': {'t': np.linspace(start=0., stop=6.0, num=13)}},
         layers=[10, 15, 25, 15, 10, 1],  # neuron per layers
-        activation_function='tanh')
+        activation_function='relu')
     
     def collocation(self, model, data):
         value = self.v['c']['R'] * model(data) + self.v['c']['L'] * self.d(wrt={'t': 1}, model=model, data=data) - self.v['c']['V_0']
@@ -20,8 +20,7 @@ if __name__ == "__main__":
 
     def boundary(self, model, _):
         i_0 = model(self.v['c']['0'])
-        #L_0 = self.v['c']['V_0'] - self.v['c']['L'] * self.d(wrt={'t': 1}, model=model, data=self.v['c']['0'])
-        return i_0,# L_0
+        return i_0
 
     def equation(self, model, data):
         return (self.v['c']['V_0'] / self.v['c']['R'] * (1 - tf.math.exp(-self.v['c']['R'] * data / self.v['c']['L'])) -
