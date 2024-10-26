@@ -121,7 +121,6 @@ class PINN:
                 self.data[batch_set] = self.data[batch_set].shuffle(buffer_size=1024).batch(batches[batch_set])
                 number_of_batches = max(number_of_batches, len(self.data[batch_set]))
             progress_bar = Progbar(target=number_of_batches)
-            sets = None
             for epoch in range(1, epochs + 1):
                 tf.print(f"Epoch: {epoch}/{epochs}")
                 train_batch = {batch_set: [*self.data[batch_set]] for batch_set in batches}
@@ -130,17 +129,22 @@ class PINN:
                         loss = self.loss_function_batch(self.model, train_batch, index-1)
                     gradients = tape.gradient(loss, self.model.trainable_variables)
                     optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-                    if plot_x is not None or test_error is not None:
-                        testing_output = tf.reshape(self.model(self.data['test']), [-1])
-                        if plot_x is not None:
-                            dynamic_plot.update(y=testing_output, plot_number=1)
+                    if index != number_of_batches:
                         if test_error is not None:
-                            error = tf.math.reduce_mean(tf.math.abs(testing_output - self.model(self.data['test'])))
                             progress_bar.update(index, values=[('loss', loss), ('test error', error)])
-                            if error < test_error:
-                                return
-                    else:
-                        progress_bar.update(index, values=[('loss', loss), ])
+                        else:
+                            progress_bar.update(index, values=[('loss', loss), ])
+                if plot_x is not None or test_error is not None:
+                    testing_output = tf.reshape(self.model(self.data['test']), [-1])
+                    if plot_x is not None:
+                        dynamic_plot.update(y=testing_output, plot_number=1)
+                    if test_error is not None:
+                        error = tf.math.reduce_mean(tf.math.abs(testing_output - self.model(self.data['test'])))
+                        progress_bar.update(index, values=[('loss', loss), ('test error', error)])
+                        if error < test_error:
+                            return
+                else:
+                    progress_bar.update(index, values=[('loss', loss), ])
         return
 
 

@@ -35,11 +35,6 @@ if __name__ == "__main__":
 
 
     def boundary(self, model, data):
-        force = (self.v['c']['E'] * self.v['c']['I'] * self.d(wrt={'x': 4}, model=model,
-                                                              data=tf.stack([self.v['c']['L'], data], axis=1)) +
-                 self.v['c']['rho'] * self.v['c']['A'] * self.d(wrt={'t': 2}, model=model,
-                                                                data=tf.stack([self.v['c']['L'], data], axis=1)) -
-                 0.1 * tf.math.sin(2.0 * np.pi * 10.0 * data) / self.v['c']['E'] / self.v['c']['I'])
         y_0_t = model(tf.stack([self.v['c']['0'], data], axis=1))
         dy_dx_0_t = self.d(wrt={'x': 1},
                            model=model,
@@ -47,9 +42,9 @@ if __name__ == "__main__":
         d2y_dx2_L_t = self.d(wrt={'x': 2},
                              model=model,
                              data=tf.stack([self.v['c']['L'], data], axis=1))
-        # d3y_dx3_L_t = self.d(wrt={'x': 3},
-        #                      model=model,
-        #                      data=tf.stack([self.v['c']['L'], data], axis=1))
+        force = (self.v['c']['E'] * self.v['c']['I'] * self.d(wrt={'x': 4}, model=model, data=tf.stack([self.v['c']['L'], data], axis=1)) +
+                 self.v['c']['rho'] * self.v['c']['A'] * self.d(wrt={'t': 2}, model=model, data=tf.stack([self.v['c']['L'], data], axis=1)) -
+                 0.1 * tf.math.sin(2.0 * np.pi * 10.0 * data) )
         return y_0_t, dy_dx_0_t, d2y_dx2_L_t, force
 
 
@@ -75,7 +70,7 @@ if __name__ == "__main__":
     pinn.loss_function = types.MethodType(loss_function, pinn)
     pinn.loss_function_batch = types.MethodType(loss_function_batch, pinn)
     pinn.train_network(epochs=10000,
-                       batches={'collocation': 4,
+                       batches={'collocation': 8,
                                 'boundary': 1},
                        error=10 ** -4,
                        plot_x='x',
