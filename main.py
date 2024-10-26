@@ -23,6 +23,7 @@ class PINN:
         self.data = {}
         self.model = None  # neural network model
         self.loss_function = None  # loss function of the neural network
+        self.loss_function_batch = None  # custom loss function if batching
         self.read_constant(constants=constants)
         self.set_training(data=data)
         self.set_layers(layers=layers, activation_function=activation_function)
@@ -114,32 +115,32 @@ class PINN:
                 else:
                     progress_bar.update(epoch, values=[('loss', loss), ])
         else:  # proportional batching
+            number_of_batches = 0
             for batch_set in batches:
                 self.data[batch_set] = tf.data.Dataset.from_tensor_slices(self.data[batch_set])
                 self.data[batch_set] = self.data[batch_set].shuffle(buffer_size=1024).batch(batches[batch_set])
-            sets = list(batches.keys())
-            number_of_batches = len(self.data[batch_set])
+                number_of_batches = max(number_of_batches, len(self.data[batch_set]))
             progress_bar = Progbar(target=number_of_batches)
+            sets = None
             for epoch in range(1, epochs + 1):
                 tf.print(f"Epoch: {epoch}/{epochs}")
-                step = 0
-                for train_batch in zip(*[self.data[key] for key in batches]):
-                    step += 1
-                    train_batch = {sets[i]: train_batch[i] for i in range(len(train_batch))}
+                train_batch = {batch_set: [*self.data[batch_set]] for batch_set in batches}
+                for index in range(1, number_of_batches + 1):
                     with tf.GradientTape() as tape:
-                        loss = self.loss_function(self.model, train_batch)
-                gradients = tape.gradient(loss, self.model.trainable_variables)
-                optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-                progress_bar.update(step, values=[('loss', loss), ])
-                if plot_x is not None or test_error is not None:
-                    testing_output = tf.reshape(self.model(self.data['test']), [-1])
-                    if plot_x is not None:
-                        dynamic_plot.update(y=testing_output, plot_number=1)
-                    if test_error is not None:
-                        error = tf.math.reduce_mean(tf.math.abs(testing_output - self.model(self.data['test'])))
-                        progress_bar.update(step, values=[('loss', loss), ('test error', error)])
-                        if error < test_error:
-                            return
+                        loss = self.loss_function_batch(self.model, train_batch, index-1)
+                    gradients = tape.gradient(loss, self.model.trainable_variables)
+                    optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+                    if plot_x is not None or test_error is not None:
+                        testing_output = tf.reshape(self.model(self.data['test']), [-1])
+                        if plot_x is not None:
+                            dynamic_plot.update(y=testing_output, plot_number=1)
+                        if test_error is not None:
+                            error = tf.math.reduce_mean(tf.math.abs(testing_output - self.model(self.data['test'])))
+                            progress_bar.update(index, values=[('loss', loss), ('test error', error)])
+                            if error < test_error:
+                                return
+                    else:
+                        progress_bar.update(index, values=[('loss', loss), ])
         return
 
 
