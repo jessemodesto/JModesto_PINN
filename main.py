@@ -153,7 +153,6 @@ class DynamicPlot:
         self.figure, self.ax = plt.subplots(figsize=(10, 8))
         self.data = {}
         plt.ion()
-        plt.show()
 
     def plot(self, pairs):
         for i in range(len(pairs)):
@@ -167,6 +166,7 @@ class DynamicPlot:
             self.data[plot_number][0].set_ydata(y)
         self.figure.canvas.draw()
         self.figure.canvas.flush_events()
+        plt.show()
         return
 
 

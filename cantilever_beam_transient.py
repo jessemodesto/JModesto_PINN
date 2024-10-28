@@ -15,11 +15,11 @@ if __name__ == "__main__":
         constants={'rho': tf.constant(value=2770.0, shape=(1, 1), dtype=tf.float64),
                    'E': tf.constant(value=7.1 * 10 ** 10, shape=(1, 1), dtype=tf.float64),
                    'I': tf.constant(value=7.8529 * 10 ** -9, shape=(1, 1), dtype=tf.float64),
-                   'A': tf.constant(value=np.pi * 0.1 ** 2, shape=(1, 1), dtype=tf.float64),
+                   'A': tf.constant(value=np.pi * 10 ** -4., shape=(1, 1), dtype=tf.float64),
                    'L': tf.constant(value=2.0, shape=(1, 1), dtype=tf.float64),
                    '0': tf.constant(value=0.0, shape=(1, 1), dtype=tf.float64),
                    'solution': tf.expand_dims(tf.convert_to_tensor(solution, dtype=tf.float64), axis=0)},
-        data={'collocation': {'x': np.random.uniform(low=0.0, high=2.0, size=21),  # datasets for each training method
+        data={'collocation': {'x': np.random.uniform(low=0.0, high=2.0, size=201),  # datasets for each training method
                               't': np.array([1.00890625], dtype=np.float64)},
               'boundary': {'t': np.array([1.00890625], dtype=np.float64)},
               'test': {'x': np.linspace(start=0., stop=2.0, num=21, dtype=np.float64),
@@ -44,7 +44,7 @@ if __name__ == "__main__":
                              data=tf.stack([self.v['c']['L'], data], axis=1))
         d3y_dx3_L_t = (self.d(wrt={'x': 3},
                               model=model,
-                              data=tf.stack([self.v['c']['L'], data], axis=1)) * self.v['c']['E'] * self.v['c']['I'] -
+                              data=tf.stack([self.v['c']['L'], data], axis=1)) * self.v['c']['E'] * self.v['c']['I'] +
                        0.1 * tf.math.sin(2.0 * np.pi * 10.0 * data))
         return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t
 
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     pinn.loss_function = types.MethodType(loss_function, pinn)
     pinn.loss_function_batch = types.MethodType(loss_function_batch, pinn)
     pinn.train_network(epochs=10000,
-                       batches={'collocation': 8,
+                       batches={'collocation': 16,
                                 'boundary': 1},
                        error=10 ** -4,
                        plot_x='x',
