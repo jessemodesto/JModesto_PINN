@@ -111,6 +111,8 @@ class PINN:
                         error = tf.math.reduce_mean(tf.math.abs(testing_output - self.model(self.data['test'])))
                         progress_bar.update(epoch, values=[('loss', loss), ('test error', error)])
                         if error < test_error:
+                            if plot_x is not None:
+                                dynamic_plot.save_figure()
                             return
                 else:
                     progress_bar.update(epoch, values=[('loss', loss), ])
@@ -142,6 +144,8 @@ class PINN:
                         error = tf.math.reduce_mean(tf.math.abs(testing_output - self.model(self.data['test'])))
                         progress_bar.update(index, values=[('loss', loss), ('test error', error)])
                         if error < test_error:
+                            if plot_x is not None:
+                                dynamic_plot.save_figure()
                             return
                 else:
                     progress_bar.update(index, values=[('loss', loss), ])
@@ -167,6 +171,10 @@ class DynamicPlot:
         self.figure.canvas.draw()
         self.figure.canvas.flush_events()
         plt.show()
+        return
+
+    def save_figure(self):
+        plt.savefig('foo.png')
         return
 
 
