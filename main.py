@@ -85,8 +85,7 @@ class PINN:
         else:
             return tf.expand_dims(value[:, self.i[next(iter(wrt))]], axis=1)
 
-    def train_network(self, epochs: int, batches: dict = None, optimizer=None, error: float = None, plot_x: str = None,
-                      test_error: float = None):
+    def train_network(self, epochs: int, batches: dict = None, optimizer=None, plot_x: str = None, test_error: float = None):
         if optimizer is None:
             optimizer = Adam()
         if plot_x is not None or test_error is not None:

@@ -14,7 +14,7 @@ if __name__ == "__main__":
     pinn = PINN(  # constants declared here so that they are not constructed each time in functions
         constants={'rho': tf.constant(value=2770.0, shape=(1, 1), dtype=tf.float64),
                    'E': tf.constant(value=7.1 * 10 ** 10, shape=(1, 1), dtype=tf.float64),
-                   'I': tf.constant(value=7.8529 * 10 ** -9, shape=(1, 1), dtype=tf.float64),
+                   'I': tf.constant(value=np.pi * 0.01 ** 4 / 4., shape=(1, 1), dtype=tf.float64),
                    'A': tf.constant(value=np.pi * 10 ** -4., shape=(1, 1), dtype=tf.float64),
                    'L': tf.constant(value=2.0, shape=(1, 1), dtype=tf.float64),
                    '0': tf.constant(value=0.0, shape=(1, 1), dtype=tf.float64),
@@ -35,6 +35,12 @@ if __name__ == "__main__":
 
 
     def boundary(self, model, data):
+        dy_dt_0_t = self.d(wrt={'t': 1},
+                           model=model,
+                           data=tf.stack([self.v['c']['0'], data], axis=1))
+        d2y_dt2_L_t = self.d(wrt={'t': 2},
+                             model=model,
+                             data=tf.stack([self.v['c']['0'], data], axis=1))
         y_0_t = model(tf.stack([self.v['c']['0'], data], axis=1))
         dy_dx_0_t = self.d(wrt={'x': 1},
                            model=model,
@@ -44,9 +50,9 @@ if __name__ == "__main__":
                              data=tf.stack([self.v['c']['L'], data], axis=1))
         d3y_dx3_L_t = (self.d(wrt={'x': 3},
                               model=model,
-                              data=tf.stack([self.v['c']['L'], data], axis=1)) * self.v['c']['E'] * self.v['c']['I'] +
+                              data=tf.stack([self.v['c']['L'], data], axis=1)) * self.v['c']['E'] * self.v['c']['I'] -
                        0.1 * tf.math.sin(2.0 * np.pi * 10.0 * data))
-        return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t
+        return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t, dy_dt_0_t, d2y_dt2_L_t
 
 
     def equation(self, model, data):
@@ -73,6 +79,5 @@ if __name__ == "__main__":
     pinn.train_network(epochs=10000,
                        batches={'collocation': 16,
                                 'boundary': 1},
-                       error=10 ** -4,
                        plot_x='x',
                        test_error=10 ** -4)
