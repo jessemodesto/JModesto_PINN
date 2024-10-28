@@ -81,3 +81,4 @@ if __name__ == "__main__":
                                 'boundary': 1},
                        plot_x='x',
                        test_error=10 ** -7)
+    input()
