@@ -38,5 +38,5 @@ if __name__ == "__main__":
     pinn.equation = types.MethodType(equation, pinn)
     pinn.loss_function = types.MethodType(loss_function, pinn)
     pinn.train_network(epochs=5000,
-                       error=10 ** -4,
+                       test_error=10 ** -4,
                        plot_x='t')

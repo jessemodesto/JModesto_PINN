@@ -90,6 +90,7 @@ class PINN:
             optimizer = Adam()
         if plot_x is not None or test_error is not None:
             testing_output = tf.reshape(self.equation(lambda x: 0, self.data['test']), [-1])
+            error = 0
             if plot_x is not None:
                 dynamic_plot = DynamicPlot()
                 dynamic_plot.plot(pairs=(
@@ -215,5 +216,5 @@ if __name__ == "__main__":
     pinn.train_network(epochs=5000,
                        batches={'collocation': 100,
                                 'boundary': 100},
-                       error=10 ** -4,
+                       test_error=10 ** -4,
                        plot_x='x')

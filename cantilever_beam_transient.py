@@ -80,4 +80,4 @@ if __name__ == "__main__":
                        batches={'collocation': 16,
                                 'boundary': 1},
                        plot_x='x',
-                       test_error=10 ** -4)
+                       test_error=10 ** -7)
