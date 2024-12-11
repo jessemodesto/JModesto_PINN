@@ -8,19 +8,14 @@ from tensorflow.keras.layers import Activation
 from tensorflow.keras.utils import get_custom_objects
 
 if __name__ == "__main__":
-    ansys = pd.read_csv('TransientDplZ.txt')
-    solution = np.array(
-        [0.0, 1.99328638928e-07, 7.82537085797e-07, 1.7293456267e-06, 3.01947488879e-06,
-         4.63264723294e-06, 6.54858649796e-06, 8.74702072906e-06, 1.12076813821e-05, 1.39103076435e-05,
-         1.68346450664e-05, 1.99604473892e-05, 2.32674847211e-05, 2.67355353571e-05, 3.03443976009e-05,
-         3.40738806699e-05, 3.79038210667e-05, 4.18140771217e-05, 4.5784519898e-05, 4.97950641147e-05,
-         5.38256463187e-05],
-        dtype=np.float64)
+    solution = np.zeros([21])
 
-    def custom_activation(x):
-        return tf.math.tanh(x) + tf.math.cosh(x)**-1
 
-    get_custom_objects().update({'custom': custom_activation})
+    # def custom_activation(x):
+    #     return tf.math.tanh(x) + tf.math.cosh(x) ** -1
+
+    #get_custom_objects().update({'custom': custom_activation})
+
     pinn = PINN(  # constants declared here so that they are not constructed each time in functions
         constants={'rho': tf.constant(value=2770.0, shape=(1, 1), dtype=tf.float64),
                    'E': tf.constant(value=7.1 * 10 ** 10, shape=(1, 1), dtype=tf.float64),
@@ -29,13 +24,13 @@ if __name__ == "__main__":
                    'L': tf.constant(value=2.0, shape=(1, 1), dtype=tf.float64),
                    '0': tf.constant(value=0.0, shape=(1, 1), dtype=tf.float64),
                    'solution': tf.expand_dims(tf.convert_to_tensor(solution, dtype=tf.float64), axis=1)},
-        data={'collocation': {'x': np.random.uniform(low=0.0, high=2.0, size=201),  # datasets for each training method
-                              't': np.array([1.00288032714], dtype=np.float64)},
-              'boundary': {'t': np.array([1.00288032714], dtype=np.float64)},
+        data={'collocation': {'x': np.random.uniform(low=0.0, high=2.0, size=101),  # datasets for each training method
+                              't': np.array([0.], dtype=np.float64)},
               'test': {'x': np.linspace(start=0., stop=2.0, num=21, dtype=np.float64),
-                       't': np.array([1.00288032714], dtype=np.float64)}},
-        layers=[10, 15, 15, 10, 1],  # neuron per layers
-        activation_function=custom_activation)
+                       't': np.array([0.], dtype=np.float64)}},
+        layers=[10, 15, 20, 15, 10, 1],  # neuron per layers
+        activation_function='tanh')
+        #activation_function=custom_activation)
 
 
     def collocation(self, model, data):
@@ -45,24 +40,26 @@ if __name__ == "__main__":
 
 
     def boundary(self, model, data):
-        # dy_dt_0_t = self.d(wrt={'t': 1},
-        #                    model=model,
-        #                    data=tf.stack([self.v['c']['0'], data], axis=1))
-        # d2y_dt2_L_t = self.d(wrt={'t': 2},
-        #                      model=model,
-        #                      data=tf.stack([self.v['c']['0'], data], axis=1))
-        y_0_t = model(tf.concat([self.v['c']['0'], data], axis=1))
+        shape = data.shape[0]
+        dy_dt_L_t = self.d(wrt={'t': 1},
+                           model=model,
+                           data=tf.stack([tf.gather(data, 0, axis=1), tf.repeat(self.v['c']['0'], shape)], axis=1))
+        d2y_dt2_L_t = self.d(wrt={'t': 2},
+                             model=model,
+                             data=tf.stack([tf.gather(data, 0, axis=1), tf.repeat(self.v['c']['0'], shape)], axis=1))
+
+        y_0_t = model(tf.stack([tf.repeat(self.v['c']['0'], shape), tf.gather(data, 1, axis=1)], axis=1))
         dy_dx_0_t = self.d(wrt={'x': 1},
                            model=model,
-                           data=tf.concat([self.v['c']['0'], data], axis=1))
+                           data=tf.stack([tf.repeat(self.v['c']['0'], shape), tf.gather(data, 1, axis=1)], axis=1))
         d2y_dx2_L_t = self.d(wrt={'x': 2},
                              model=model,
-                             data=tf.concat([self.v['c']['L'], data], axis=1))
+                             data=tf.stack([tf.repeat(self.v['c']['L'], shape), tf.gather(data, 1, axis=1)], axis=1))
         d3y_dx3_L_t = (self.d(wrt={'x': 3},
                               model=model,
-                              data=tf.concat([self.v['c']['L'], data], axis=1)) * self.v['c']['E'] * self.v['c']['I'] -
-                       0.1 * tf.math.sin(2.0 * np.pi * 10.0 * data))
-        return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t  # dy_dt_0_t, d2y_dt2_L_t
+                              data=tf.stack([tf.repeat(self.v['c']['L'], shape), tf.gather(data, 1, axis=1)], axis=1)) * self.v['c']['E'] * self.v['c']['I'] -
+                       0.1 * tf.math.sin(2.0 * np.pi * 10.0 * tf.gather(data, [1], axis=1)))
+        return y_0_t, dy_dx_0_t, d2y_dx2_L_t, d3y_dx3_L_t, dy_dt_L_t, d2y_dt2_L_t
 
 
     def equation(self, model, data):
@@ -77,7 +74,7 @@ if __name__ == "__main__":
 
     def loss_function_batch(self, model, train_data, index):
         loss = tf.reduce_mean(tf.square(self.collocation(model, train_data['collocation'][index])))
-        loss += tf.reduce_sum([tf.square(bc) for bc in self.boundary(model, train_data['boundary'][0])])
+        loss += tf.reduce_sum([tf.square(bc) for bc in self.boundary(model, train_data['collocation'][index])])
         return loss
 
 
@@ -87,8 +84,7 @@ if __name__ == "__main__":
     pinn.loss_function = types.MethodType(loss_function, pinn)
     pinn.loss_function_batch = types.MethodType(loss_function_batch, pinn)
     pinn.train_network(epochs=10000,
-                       batches={'collocation': 16,
-                                'boundary': 1},
+                       batches={'collocation': 16},
                        plot_x='x',
                        test_error=10 ** -7)
     input()
