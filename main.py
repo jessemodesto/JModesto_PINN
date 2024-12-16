@@ -113,7 +113,7 @@ class PINN:
                         if error < test_error:
                             if plot_x is not None:
                                 dynamic_plot.save_figure()
-                            return
+                            return epoch,
                 else:
                     progress_bar.update(epoch, values=[('loss', loss), ])
         else:  # proportional batching
@@ -146,7 +146,7 @@ class PINN:
                         if error < test_error:
                             if plot_x is not None:
                                 dynamic_plot.save_figure()
-                            return
+                            return epoch, error.numpy(), loss.numpy()
                 else:
                     progress_bar.update(index, values=[('loss', loss), ])
         return
