@@ -1,5 +1,6 @@
 import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import types
 import numpy as np
 import matplotlib
@@ -85,12 +86,13 @@ class PINN:
         else:
             return tf.expand_dims(value[:, self.i[next(iter(wrt))]], axis=1)
 
-    def train_network(self, epochs: int, batches: dict = None, optimizer=None, plot_x: str = None, test_error: float = None):
+    def train_network(self, epochs: int, batches: dict = None, optimizer=None, plot_x: str = None,
+                      test_error: float = None):
         if optimizer is None:
             optimizer = Adam()
         if plot_x is not None or test_error is not None:
             testing_output = tf.reshape(self.equation(lambda x: 0, self.data['test']), [-1])
-            error = 0
+            error = tf.constant(0)
             if plot_x is not None:
                 dynamic_plot = DynamicPlot()
                 dynamic_plot.plot(pairs=(
@@ -104,18 +106,18 @@ class PINN:
                 gradients = tape.gradient(loss, self.model.trainable_variables)
                 optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
                 if plot_x is not None or test_error is not None:
-                    testing_output = self.model(self.data['test'])[:, 0]
+                    test = self.model(self.data['test'])[:, 0]
                     if plot_x is not None:
-                        dynamic_plot.update(y=testing_output, plot_number=1)
+                        dynamic_plot.update(y=test, plot_number=1)
                     if test_error is not None:
-                        error = tf.math.reduce_mean(tf.math.abs(testing_output - self.model(self.data['test'])))
-                        progress_bar.update(epoch, values=[('loss', loss), ('test error', error)])
+                        error = tf.reduce_mean(tf.math.abs(testing_output - test) / (tf.math.abs(testing_output) + tf.math.abs(test)) * 2)
+                        progress_bar.update(epoch, values=[('loss', loss.numpy()), ('test error', error.numpy())])
                         if error < test_error:
                             if plot_x is not None:
                                 dynamic_plot.save_figure()
                             return epoch,
                 else:
-                    progress_bar.update(epoch, values=[('loss', loss), ])
+                    progress_bar.update(epoch, values=[('loss', loss.numpy()), ])
         else:  # proportional batching
             number_of_batches = 0
             for batch_set in batches:
@@ -128,27 +130,22 @@ class PINN:
                 train_batch = {batch_set: [*self.data[batch_set]] for batch_set in batches}
                 for index in range(1, number_of_batches + 1):
                     with tf.GradientTape() as tape:
-                        loss = self.loss_function_batch(self.model, train_batch, index-1)
+                        loss = self.loss_function_batch(self.model, train_batch, index - 1)
                     gradients = tape.gradient(loss, self.model.trainable_variables)
                     optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
-                    if index != number_of_batches:
-                        if test_error is not None:
-                            progress_bar.update(index, values=[('loss', loss), ('test error', error)])
-                        else:
-                            progress_bar.update(index, values=[('loss', loss), ])
                 if plot_x is not None or test_error is not None:
-                    testing_output = tf.reshape(self.model(self.data['test']), [-1])
+                    test = self.model(self.data['test'])[:, 0]
                     if plot_x is not None:
-                        dynamic_plot.update(y=testing_output, plot_number=1)
+                        dynamic_plot.update(y=test, plot_number=1)
                     if test_error is not None:
-                        error = tf.math.reduce_mean(tf.math.abs(testing_output - self.model(self.data['test'])))
-                        progress_bar.update(index, values=[('loss', loss), ('test error', error)])
+                        error = tf.reduce_mean(tf.math.abs(testing_output - test) / (tf.math.abs(testing_output) + tf.math.abs(test)) * 2)
+                        progress_bar.update(index, values=[('loss', loss.numpy()), ('test error', error.numpy())])
                         if error < test_error:
                             if plot_x is not None:
                                 dynamic_plot.save_figure()
                             return epoch, error.numpy(), loss.numpy()
                 else:
-                    progress_bar.update(index, values=[('loss', loss), ])
+                    progress_bar.update(index, values=[('loss', loss.numpy()), ])
         return
 
 

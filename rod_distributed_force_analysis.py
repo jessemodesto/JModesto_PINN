@@ -17,7 +17,8 @@ layer_set = itertools.product(collocation_points, neuron_analysis, batch_size, a
 
 with open('neuron_analysis.csv', 'w', newline='') as file:
     writer = csv.writer(file)
-    writer.writerows([['collocation_pts', 'layers', 'batch_size', 'activation_func', 'time', 'epochs', 'test_error', 'loss']])
+    writer.writerows(
+        [['collocation_pts', 'layers', 'batch_size', 'activation_func', 'time', 'epochs', 'test_error', 'loss']])
 
 for collocations, neuron, batch, activation in neuron_set:
     start = time.time()
@@ -63,9 +64,10 @@ for collocations, neuron, batch, activation in neuron_set:
     pinn.equation = types.MethodType(equation, pinn)
     pinn.loss_function_batch = types.MethodType(loss_function_batch, pinn)
     epoch, error, loss = pinn.train_network(epochs=100000,
-                                      batches={'collocation': batch,
-                                               'boundary': 1},
-                                      test_error=10)
+                                            batches={'collocation': batch,
+                                                     'boundary': 1},
+                                            test_error=0.01,
+                                            plot_x='x')
     elapsed = time.time() - start
     with open('neuron_analysis.csv', 'a', newline='') as file:
         writer = csv.writer(file)
