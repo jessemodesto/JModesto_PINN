@@ -6,15 +6,15 @@ import types
 if __name__ == "__main__":
     pinn = PINN(
         constants={'c': tf.constant(1.0, shape=(1, 1), dtype=tf.float64),
-                   'A': tf.constant(1.0, shape=(1, 1), dtype=tf.float64),
-                   'E': tf.constant(1.0, shape=(1, 1), dtype=tf.float64),
+                   'A': tf.constant(value=np.pi * 10 ** -4., shape=(1, 1), dtype=tf.float64),
+                   'E': tf.constant(value=7.1 * 10 ** 10, shape=(1, 1), dtype=tf.float64),
                    'L': tf.constant(1.0, shape=(1, 1), dtype=tf.float64),
                    'zero': tf.constant(0.0, shape=(1, 1), dtype=tf.float64),
                    'length': tf.constant(1.0, shape=(1, 1), dtype=tf.float64)},
-        data={'collocation': {'x': np.random.uniform(low=0., high=1.0, size=500)},
+        data={'collocation': {'x': np.random.uniform(low=0., high=1.0, size=1001)},
               'boundary': {'x': np.array([0], dtype=np.float64)},
-              'test': {'x': np.linspace(start=0.0, stop=1.0, num=11, dtype=np.float64)}},
-        layers=[15, 25, 15, 1],  # neuron per layers
+              'test': {'x': np.linspace(start=0.0, stop=1.0, num=101, dtype=np.float64)}},
+        layers=[5, 10, 15, 10, 5, 1],  # neuron per layers
         activation_function='tanh')  # activation function
 
     def collocation(self, model, data):

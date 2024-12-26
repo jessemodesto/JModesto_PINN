@@ -99,7 +99,7 @@ class PINN:
                     (self.data['test'][:, self.i[plot_x]], testing_output),
                     (self.data['test'][:, self.i[plot_x]], tf.zeros([testing_output.shape[0]], dtype=tf.float64))))
         if batches is None:  # full size batching
-            progress_bar = Progbar(target=epochs)
+            # progress_bar = Progbar(target=epochs)
             for epoch in range(1, epochs + 1):
                 with tf.GradientTape() as tape:
                     loss = self.loss_function(self.model, self.data)
@@ -110,21 +110,23 @@ class PINN:
                     if plot_x is not None:
                         dynamic_plot.update(y=test, plot_number=1)
                     if test_error is not None:
-                        error = tf.reduce_mean(tf.math.abs(testing_output - test) / (tf.math.abs(testing_output) + tf.math.abs(test)) * 2)
-                        progress_bar.update(epoch, values=[('loss', loss.numpy()), ('test error', error.numpy())])
+                        error = tf.reduce_mean(tf.square(testing_output - test)) / tf.reduce_mean(tf.math.abs(testing_output))
+                        tf.print(error)
+                        # progress_bar.update(epoch, values=[('loss', loss), ('test error', error)])
                         if error < test_error:
                             if plot_x is not None:
                                 dynamic_plot.save_figure()
                             return epoch,
                 else:
-                    progress_bar.update(epoch, values=[('loss', loss.numpy()), ])
+                    pass
+                    # progress_bar.update(epoch, values=[('loss', loss.numpy()), ])
         else:  # proportional batching
             number_of_batches = 0
             for batch_set in batches:
                 self.data[batch_set] = tf.data.Dataset.from_tensor_slices(self.data[batch_set])
                 self.data[batch_set] = self.data[batch_set].shuffle(buffer_size=1024).batch(batches[batch_set])
                 number_of_batches = max(number_of_batches, len(self.data[batch_set]))
-            progress_bar = Progbar(target=number_of_batches)
+            # progress_bar = Progbar(target=number_of_batches)
             for epoch in range(1, epochs + 1):
                 tf.print(f"Epoch: {epoch}/{epochs}")
                 train_batch = {batch_set: [*self.data[batch_set]] for batch_set in batches}
@@ -138,14 +140,16 @@ class PINN:
                     if plot_x is not None:
                         dynamic_plot.update(y=test, plot_number=1)
                     if test_error is not None:
-                        error = tf.reduce_mean(tf.math.abs(testing_output - test) / (tf.math.abs(testing_output) + tf.math.abs(test)) * 2)
-                        progress_bar.update(index, values=[('loss', loss.numpy()), ('test error', error.numpy())])
+                        error = tf.reduce_mean(tf.square(testing_output - test)) / tf.reduce_mean(tf.math.abs(testing_output))
+                        tf.print(error)
+                        # progress_bar.update(index, values=[('loss', loss), ('test error', error)])
                         if error < test_error:
                             if plot_x is not None:
                                 dynamic_plot.save_figure()
                             return epoch, error.numpy(), loss.numpy()
                 else:
-                    progress_bar.update(index, values=[('loss', loss.numpy()), ])
+                    pass
+                    # progress_bar.update(index, values=[('loss', loss.numpy()), ])
         return
 
 

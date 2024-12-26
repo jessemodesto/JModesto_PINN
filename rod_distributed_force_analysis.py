@@ -6,10 +6,10 @@ import numpy as np
 import types
 import csv
 
-collocation_points = [40, 50, 60, 100, 150, 200, 300, 400, 500, 1000]
-layer_analysis = [i * [10] for i in range(1, 16)]
-neuron_analysis = [[i] for i in range(5, 151, 5)]
-batch_size = [4, 8, 12, 16, 20, 24, 28, 32]
+collocation_points = [100, 200, 500, 1000, 5000, 10000]
+layer_analysis = [i * [10] for i in range(1, 11)]
+neuron_analysis = [[i] for i in range(10, 151, 10)]
+batch_size = [4, 8, 16, 32, 64]
 activation_function_analysis = ['tanh', 'sigmoid', 'softplus']
 
 neuron_set = itertools.product(collocation_points, neuron_analysis, batch_size, activation_function_analysis)
@@ -66,8 +66,7 @@ for collocations, neuron, batch, activation in neuron_set:
     epoch, error, loss = pinn.train_network(epochs=100000,
                                             batches={'collocation': batch,
                                                      'boundary': 1},
-                                            test_error=0.01,
-                                            plot_x='x')
+                                            test_error=10**-4)
     elapsed = time.time() - start
     with open('neuron_analysis.csv', 'a', newline='') as file:
         writer = csv.writer(file)
