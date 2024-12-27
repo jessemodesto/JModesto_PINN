@@ -1,6 +1,7 @@
 import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import csv
 import types
 import numpy as np
 import matplotlib
@@ -12,7 +13,7 @@ from tensorflow.keras.initializers import HeNormal
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import Progbar
 
-matplotlib.use("QtAgg")  # Comment out if PyQt is not installed
+#matplotlib.use("QtAgg")  # Comment out if PyQt is not installed
 
 
 class PINN:
@@ -91,7 +92,7 @@ class PINN:
         if optimizer is None:
             optimizer = Adam()
         if plot_x is not None or test_error is not None:
-            testing_output = tf.reshape(self.equation(lambda x: 0, self.data['test']), [-1])
+            testing_output = tf.reshape(self.equation(self.data['test']), [-1])
             error = tf.constant(0)
             if plot_x is not None:
                 dynamic_plot = DynamicPlot()
@@ -110,13 +111,16 @@ class PINN:
                     if plot_x is not None:
                         dynamic_plot.update(y=test, plot_number=1)
                     if test_error is not None:
-                        error = tf.reduce_mean(tf.square(testing_output - test)) / tf.reduce_mean(tf.math.abs(testing_output))
+                        error = tf.reduce_mean(tf.square(testing_output - test)) / tf.reduce_mean(testing_output)
                         tf.print(error)
+                        with open('real_error.csv', 'a', newline='') as file:
+                            writer = csv.writer(file)
+                            writer.writerows([[error.numpy()]])
                         # progress_bar.update(epoch, values=[('loss', loss), ('test error', error)])
                         if error < test_error:
                             if plot_x is not None:
                                 dynamic_plot.save_figure()
-                            return epoch,
+                            return epoch, error.numpy(), loss.numpy()
                 else:
                     pass
                     # progress_bar.update(epoch, values=[('loss', loss.numpy()), ])
@@ -140,7 +144,7 @@ class PINN:
                     if plot_x is not None:
                         dynamic_plot.update(y=test, plot_number=1)
                     if test_error is not None:
-                        error = tf.reduce_mean(tf.square(testing_output - test)) / tf.reduce_mean(tf.math.abs(testing_output))
+                        error = tf.reduce_mean(tf.square(testing_output - test)) / tf.reduce_mean(testing_output)
                         tf.print(error)
                         # progress_bar.update(index, values=[('loss', loss), ('test error', error)])
                         if error < test_error:
@@ -157,18 +161,36 @@ class DynamicPlot:
     def __init__(self):
         self.figure, self.ax = plt.subplots(figsize=(10, 8))
         self.data = {}
+        self.ax.set_title('')
+        self.ax.set_xlabel('')
+        self.ax.set_ylabel('')
         plt.ion()
 
     def plot(self, pairs):
-        for i in range(len(pairs)):
-            self.data[i] = self.ax.plot(pairs[i][0], pairs[i][1])
+        # 0th index as a scatter plot
+        self.data[0] = self.ax.plot(pairs[0][0], pairs[0][1], color='blue', label="Analytic")[0]
+
+        # 1st index as a line plot
+        self.data[1] = self.ax.scatter(pairs[1][0], pairs[1][1], color='black', label="PINN", s=5)
+        self.ax.legend()
         return
 
     def update(self, x=None, y=None, plot_number=None):
-        if x is not None:
-            self.data[plot_number][0].set_xdata(x)
-        if y is not None:
-            self.data[plot_number][0].set_ydata(y)
+        if plot_number == 1:
+            # Update scatter plot
+            offsets = self.data[1].get_offsets()
+            if x is not None:
+                offsets[:, 0] = x
+            if y is not None:
+                offsets[:, 1] = y
+            self.data[1].set_offsets(offsets)
+        elif plot_number == 0:
+            # Update line plot
+            if x is not None:
+                self.data[0].set_xdata(x)
+            if y is not None:
+                self.data[0].set_ydata(y)
+
         self.figure.canvas.draw()
         self.figure.canvas.flush_events()
         plt.show()
