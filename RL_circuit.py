@@ -7,15 +7,16 @@ import time
 
 if __name__ == "__main__":
     start = time.time()
-    pinn = PINN(  # constants declared here so that they are not constructed each time in functions
+    pinn = PINN(
         constants={'L': tf.constant(value=1.0, shape=(1, 1), dtype=tf.float64),
                    'R': tf.constant(value=1.0, shape=(1, 1), dtype=tf.float64),
                    'V': tf.constant(value=1.0, shape=(1, 1), dtype=tf.float64),
                    '0': tf.constant(value=0.0, shape=(1, 1), dtype=tf.float64)},
-        data={'collocation': {'t': np.random.uniform(low=0.0, high=6.0, size=1001)},
+        data={'collocation': {'t': np.random.uniform(low=0.0, high=6.0, size=1000)},
               'test': {'t': np.linspace(start=0., stop=6.0, num=101)}},
-        layers=[15, 30, 60, 30, 15, 1],  # neuron per layers
-        activation_function='relu')
+        layers=[15, 30, 60, 30, 15, 1],
+        activation_function='tanh', #sigmoid, relu
+        guess=0)
 
     def collocation(self, model, data):
         value = self.v['c']['R'] * model(data) + \
@@ -47,6 +48,6 @@ if __name__ == "__main__":
     pinn.equation = types.MethodType(equation, pinn)
     pinn.loss_function = types.MethodType(loss_function, pinn)
     print(pinn.train_network(epochs=100000,
-                             test_error=10 ** -5,
+                             test_error=10 ** -2,
                              plot_x='t'))
     print(time.time() - start)

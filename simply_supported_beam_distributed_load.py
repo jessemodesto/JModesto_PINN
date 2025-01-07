@@ -2,11 +2,8 @@ from main import PINN
 import tensorflow as tf
 import numpy as np
 import types
-import csv
-import time
 
 if __name__ == "__main__":
-    start = time.time()
     pinn = PINN(
         constants={'I': tf.constant(value=np.pi * 0.01 ** 4 / 4., shape=(1, 1), dtype=tf.float64),
                    # 'I': tf.constant(value=1.0, shape=(1, 1), dtype=tf.float64),
