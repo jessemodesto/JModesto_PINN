@@ -6,7 +6,7 @@ import numpy as np
 import types
 import csv
 
-collocation_points = [200, 300, 400, 500, 1000, 5000]
+collocation_points = [200, 300, 400, 500, 1000]
 layer_analysis = [i * [10] for i in range(2, 6)]
 neuron_analysis = [[i] for i in range(10, 51, 10)]
 batch_size = [4, 8, 16, 32, 64]
@@ -61,6 +61,6 @@ for collocations, neuron, batch, activation in neuron_set:
                                                            batches={'collocation': batch},
                                                            test_error=10**-3)
     elapsed = time.time() - start
-    with open('neuron_analysis.csv', 'a', newline='') as file:
+    with open('layer_analysis.csv', 'a', newline='') as file:
         writer = csv.writer(file)
-        writer.writerows([[collocations, neuron, batch, activation, elapsed, epoch, rel_error, loss, max_error]])
+        writer.writerows([[collocations, len(neuron), batch, activation, elapsed, epoch, rel_error, loss, max_error]])
