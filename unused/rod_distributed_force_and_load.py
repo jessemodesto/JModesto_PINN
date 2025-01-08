@@ -21,14 +21,12 @@ if __name__ == "__main__":
         value = self.v['c']['A'] * self.v['c']['E'] * self.d(wrt={'x': 2}, model=model, data=data) + self.v['c']['c'] * data
         return value
 
-
     def boundary(self, model, _):
         fix = model(self.v['c']['zero'])
         end = (self.d(wrt={'x': 1},
                       model=model,
                       data=self.v['c']['L']) - self.v['c']['c'] / 2 / self.v['c']['A'] / self.v['c']['E'] * self.v['c']['L'] ** 2)
         return fix, end
-
 
     def equation(self, model, data):
         return (self.v['c']['c'] / self.v['c']['A'] / self.v['c']['E'] *
@@ -37,7 +35,8 @@ if __name__ == "__main__":
     # TODO: verify this equation is correct
     def loss_function_batch(self, model, train_data, index):
         loss = tf.reduce_mean(tf.square(self.collocation(model, train_data['collocation'][index])))
-        loss += tf.reduce_sum([tf.reduce_mean(tf.square(bc)) for bc in self.boundary(model, train_data['boundary'][0])])
+        loss += tf.reduce_sum([tf.reduce_mean(tf.square(bc)) for bc in
+                               self.boundary(model, train_data['boundary'][0])])
         return loss
 
     pinn.collocation = types.MethodType(collocation, pinn)
