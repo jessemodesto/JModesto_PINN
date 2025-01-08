@@ -24,12 +24,12 @@ if __name__ == "__main__":
                 self.v['c']['alpha'] * self.d(wrt={'x': 2}, model=model, data=data)
         return value
 
-    def boundary(self, model, boundary, inital):
+    def boundary(self, model, boundary, initial):
         shape_boundary = boundary.shape[0]
-        shape_initial = inital.shape[0]
+        shape_initial = initial.shape[0]
         T_0_t = tf.reduce_mean(model(tf.stack([tf.reshape(tf.repeat(self.v['c']['0'], shape_boundary), (shape_boundary, 1)), boundary], axis=1)))
         T_L_t = tf.reduce_mean(model(tf.stack([tf.reshape(tf.repeat(self.v['c']['L'], shape_boundary), (shape_boundary, 1)), boundary], axis=1)))
-        T_x_0 = tf.reduce_mean(model(tf.stack([inital, tf.reshape(tf.repeat(self.v['c']['0'], shape_initial), (shape_initial, 1))], axis=1))) - 10
+        T_x_0 = tf.reduce_mean(model(tf.stack([initial, tf.reshape(tf.repeat(self.v['c']['0'], shape_initial), (shape_initial, 1))], axis=1))) - 10
         return T_0_t, T_L_t, T_x_0
 
     def equation(self, data):
